@@ -27,6 +27,7 @@ from pi_review_precommit.prompts import (
     build_first_round_prompt,
     build_followup_prompt,
     get_previous_issues,
+    get_review_guidelines,
     get_staged_diff,
     get_staged_files,
     get_staged_tree_hash,
@@ -97,12 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     # 6. Construct prompt
     files = get_staged_files()
     system_prompt = get_system_prompt(config.system_prompt)
+    review_guidelines = get_review_guidelines() if config.review_guidelines else None
 
     if round_number == 0:
-        user_prompt = build_first_round_prompt(diff, files)
+        user_prompt = build_first_round_prompt(diff, files, review_guidelines)
     else:
         previous_issues = get_previous_issues()
-        user_prompt = build_followup_prompt(diff, files, round_number, previous_issues)
+        user_prompt = build_followup_prompt(
+            diff, files, round_number, previous_issues, review_guidelines
+        )
 
     # 7. Invoke pi
     try:

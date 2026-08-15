@@ -76,6 +76,21 @@ def test_archive_sessions_cli_flag_beats_env(monkeypatch: pytest.MonkeyPatch) ->
     assert parse_args(["--archive-sessions"]).archive_sessions is True
 
 
+def test_review_guidelines_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PI_REVIEW_NO_REVIEW_GUIDELINES", raising=False)
+    assert parse_args([]).review_guidelines is True
+
+
+def test_review_guidelines_env_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PI_REVIEW_NO_REVIEW_GUIDELINES", "1")
+    assert parse_args([]).review_guidelines is False
+
+
+def test_review_guidelines_cli_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PI_REVIEW_NO_REVIEW_GUIDELINES", raising=False)
+    assert parse_args(["--no-review-guidelines"]).review_guidelines is False
+
+
 def test_system_prompt_cli_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PI_REVIEW_SYSTEM_PROMPT", "env prompt")
     cfg = parse_args(["--system-prompt", "cli prompt"])

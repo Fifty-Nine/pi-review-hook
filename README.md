@@ -116,6 +116,7 @@ Precedence: **CLI args (pre-commit `args`) > env vars (`PI_REVIEW_*`) > defaults
 | System prompt | `--system-prompt` / `--system-prompt-file` | `PI_REVIEW_SYSTEM_PROMPT` | built-in reviewer prompt |
 | Session dir | `--session-dir` | `PI_REVIEW_SESSION_DIR` | `.git/pi-reviewer/sessions` |
 | Archive sessions | `--archive-sessions` | `PI_REVIEW_ARCHIVE_SESSIONS` | off (delete on go) |
+| Review guidelines | `--no-review-guidelines` | `PI_REVIEW_NO_REVIEW_GUIDELINES` | on (auto-discover `REVIEW_GUIDELINES.md`) |
 
 Examples:
 
@@ -173,6 +174,26 @@ export PI_REVIEW_ARCHIVE_SESSIONS=1
   tar -xzf .git/pi-reviewer/archives/<id>-<ts>.tar.gz -C /tmp
   pi --session <session-id> --session-dir /tmp/sessions
   ```
+
+## Custom review criteria (REVIEW_GUIDELINES.md)
+
+Place a `REVIEW_GUIDELINES.md` at the root of your repo to give the reviewer
+project-specific criteria — for example, what constitutes a blocking
+("no-go") finding. Its contents are appended to the review prompt and
+**override the built-in criteria** (the system prompt says so explicitly), so
+the agent can be more confident about rejecting commits that violate your
+rules. You can put anything there; it's plain Markdown.
+
+```markdown
+# Review Guidelines
+A "no-go" is required when:
+- Secrets or credentials are committed.
+- The change breaks the documented failure-mode matrix.
+- Behavior changes are not covered by tests.
+```
+
+The file is auto-discovered on every review. Disable with
+`--no-review-guidelines` or `PI_REVIEW_NO_REVIEW_GUIDELINES=1`.
 
 ## Escape hatch
 

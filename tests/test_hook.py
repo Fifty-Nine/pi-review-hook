@@ -299,3 +299,24 @@ def test_go_without_archive_flag_deletes_session(
     assert hook.main([]) == 0
     assert not sdir.exists()
     assert not (Path(".git") / "pi-reviewer" / "archives").exists()
+
+
+def test_guidelines_included_in_prompt_when_file_present(
+    mock_git, mock_pi_available, monkeypatch, tmp_path
+):
+    (tmp_path / "REVIEW_GUIDELINES.md").write_text("No-go if secrets are committed.")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    assert "No-go if secrets are committed." in captured["user_prompt"]
+    assert "Project review guidelines" in captured["user_prompt"]
+
+
+def test_guidelines_skipped_with_flag(
+    mock_git, mock_pi_available, monkeypatch, tmp_path
+):
+    (tmp_path / "REVIEW_GUIDELINES.md").write_text("No-go if secrets are committed.")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main(["--no-review-guidelines"]) == 0
+    assert "No-go if secrets are committed." not in captured["user_prompt"]

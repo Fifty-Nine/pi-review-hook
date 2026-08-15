@@ -39,7 +39,8 @@ git commit
   ├─ tree hash matches prior rejection? → yes: exit 1 (auto-reject, no pi call)
   ├─ load session state from .git/pi-reviewer/state.json
   ├─ construct prompt (first round vs follow-up with leniency note,
-  │  current date injected so the model doesn't guess the date)
+  │  current date injected so the model doesn't guess the date,
+  │  REVIEW_GUIDELINES.md appended if present)
   ├─ invoke: pi --mode json --session-id <id> --model <model> --session-dir <dir>
   │         -e <bundled extension.ts>
   │         --system-prompt "<reviewer prompt>"
@@ -107,6 +108,7 @@ CLI args (pre-commit `args`) > env vars (PI_REVIEW_*) > built-in defaults
 | System prompt | `--system-prompt` / `--system-prompt-file` | `PI_REVIEW_SYSTEM_PROMPT` | Built-in reviewer prompt |
 | Session dir | `--session-dir` | `PI_REVIEW_SESSION_DIR` | `.git/pi-reviewer/sessions` |
 | Archive sessions | `--archive-sessions` | `PI_REVIEW_ARCHIVE_SESSIONS` | off (delete on go) |
+| Review guidelines | `--no-review-guidelines` | `PI_REVIEW_NO_REVIEW_GUIDELINES` | on (auto-discover `REVIEW_GUIDELINES.md`) |
 
 **Note**: default binary is `pi`, not `pi-jailed`. The `pi-jailed` variant is
 NixOS-specific (bubblewrap-sandboxed). NixOS consumers override with
@@ -296,6 +298,9 @@ present in `dist/*.whl`.
 - [x] Go-decision review log: comments persisted to `.git/pi-reviewer/reviews/`
       and printed at commit time
 - [x] Current date injected into review prompts (fixes model date-guessing)
+- [x] REVIEW_GUIDELINES.md support: auto-discovered at repo root, appended to
+      the review prompt, overrides default criteria (opt-out via
+      `--no-review-guidelines`); this repo dogfoods its own REVIEW_GUIDELINES.md
 - [x] Opt-in session archiving: `--archive-sessions` / `PI_REVIEW_ARCHIVE_SESSIONS`
       tars the session to `.git/pi-reviewer/archives/` instead of deleting on go
 - [ ] End-to-end manual testing via `pre-commit try-repo`

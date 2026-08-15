@@ -22,6 +22,7 @@ class Config:
     session_dir: str  # relative to repo root, e.g. ".git/pi-reviewer/sessions"
     system_prompt_file: str | None = None
     archive_sessions: bool = False
+    review_guidelines: bool = True
 
 
 DEFAULT_MODEL = "glm-5.2"
@@ -79,6 +80,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
         help="On approval, archive the pi session as .tar.gz instead of "
         "deleting it (env: PI_REVIEW_ARCHIVE_SESSIONS=1).",
     )
+    parser.add_argument(
+        "--no-review-guidelines",
+        action="store_true",
+        default=None,
+        help="Ignore REVIEW_GUIDELINES.md (env: PI_REVIEW_NO_REVIEW_GUIDELINES=1).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -111,4 +118,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         system_prompt_file=args.system_prompt_file,
         archive_sessions=bool(args.archive_sessions)
         or _env_flag("PI_REVIEW_ARCHIVE_SESSIONS"),
+        review_guidelines=not (
+            args.no_review_guidelines or _env_flag("PI_REVIEW_NO_REVIEW_GUIDELINES")
+        ),
     )

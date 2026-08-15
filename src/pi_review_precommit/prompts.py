@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are an automated code reviewer for a pre-commit hook. Your job is to
@@ -51,6 +52,9 @@ findings to report.
 - Be proportional — don't demand rigor inconsistent with the rest of the
   codebase.
 - The author would likely fix the issue if aware of it.
+- If the repository contains a REVIEW_GUIDELINES.md file, its contents
+  override these general instructions — follow them when deciding go vs
+  no-go.
 
 ## Multi-round reviews
 
@@ -107,7 +111,40 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def build_first_round_prompt(diff: str, files: list[str]) -> str:
+REVIEW_GUIDELINES_FILE = "REVIEW_GUIDELINES.md"
+
+
+def get_review_guidelines() -> str | None:
+    """Read REVIEW_GUIDELINES.md from the repo root, if present.
+
+    Follows the pi-review extension convention: a REVIEW_GUIDELINES.md file
+    in the repo (pre-commit runs at the repo root) is appended to the review
+    prompt and overrides the default criteria. Returns None if absent,
+    empty, or unreadable.
+    """
+    path = Path(REVIEW_GUIDELINES_FILE)
+    try:
+        if not path.is_file():
+            return None
+        content = path.read_text().strip()
+    except OSError:
+        return None
+    return content or None
+
+
+def _guidelines_section(guidelines: str | None) -> str:
+    """Render the project review guidelines section, or empty string."""
+    if not guidelines:
+        return ""
+    return (
+        "\n\n## Project review guidelines (override the default criteria)\n\n"
+        f"{guidelines}"
+    )
+
+
+def build_first_round_prompt(
+    diff: str, files: list[str], review_guidelines: str | None = None
+) -> str:
     """Build the prompt for the first review round."""
     files_str = "\n".join(f"  - {f}" for f in files)
     return f"""\
@@ -125,6 +162,7 @@ Today's date is {_today()}.
 ```diff
 {diff}
 ```
+{_guidelines_section(review_guidelines)}
 
 Perform your review and call submit_review_decision with your decision.
 """
@@ -135,6 +173,7 @@ def build_followup_prompt(
     files: list[str],
     round_number: int,
     previous_issues: list | None,
+    review_guidelines: str | None = None,
 ) -> str:
     """Build the prompt for a subsequent review round."""
     files_str = "\n".join(f"  - {f}" for f in files)
@@ -169,6 +208,7 @@ new problems.
 ```diff
 {diff}
 ```
+{_guidelines_section(review_guidelines)}
 
 Perform your review and call submit_review_decision with your decision.
 """
