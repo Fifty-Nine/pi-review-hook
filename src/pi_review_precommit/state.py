@@ -56,15 +56,17 @@ def clear_state(
     ``<session-dir-parent>/archives/`` first (opt-in, so prior sessions can
     be resurrected for interrogation) instead of being deleted outright.
     """
-    p = state_path()
-    if p.exists():
-        p.unlink()
-
     sdir = sessions_path(session_dir)
     if sdir.exists():
         if archive:
             archive_sessions(session_dir, session_id)
         shutil.rmtree(sdir)
+
+    # Unlink the state file last: if archiving (or anything above) fails,
+    # the hook fails closed but state.json is still intact for a retry.
+    p = state_path()
+    if p.exists():
+        p.unlink()
 
 
 def archive_sessions(
@@ -80,7 +82,7 @@ def archive_sessions(
     sdir = sessions_path(session_dir)
     archives_dir = sdir.parent / "archives"
     archives_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now().strftime("%Y%m%dT%H%M%S%f")  # %f: sub-second precision
     stem = session_id or "sessions"
     path = archives_dir / f"{stem}-{ts}.tar.gz"
     with tarfile.open(path, "w:gz") as tar:
@@ -141,7 +143,7 @@ def record_approval(
     """
     now = datetime.now()
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    path = REVIEWS_DIR / f"{now.strftime('%Y%m%dT%H%M%S')}-{tree_hash}.json"
+    path = REVIEWS_DIR / f"{now.strftime('%Y%m%dT%H%M%S%f')}-{tree_hash}.json"
     payload = {
         "timestamp": now.isoformat(timespec="seconds"),
         "session_id": session_id,

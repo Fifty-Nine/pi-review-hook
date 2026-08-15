@@ -138,3 +138,24 @@ def test_archive_sessions_returns_path(tmp_path) -> None:
     assert path.exists()
     assert path.name.startswith("s1-")
     assert path.suffix == ".gz"
+
+
+def test_clear_state_archive_failure_keeps_state_file(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If archiving fails, the hook fails closed but state.json survives."""
+    state.record_rejection("s1", "tree1", None)
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions" / "s1"
+    sessions.mkdir(parents=True)
+    (sessions / "session.json").write_text("{}")
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(state.tarfile, "open", boom)
+    with pytest.raises(OSError):
+        state.clear_state(session_id="s1", archive=True)
+
+    # state file intact (archive failed BEFORE the unlink), session intact
+    assert state.state_path().exists()
+    assert sessions.exists()
