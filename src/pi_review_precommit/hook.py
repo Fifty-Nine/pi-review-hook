@@ -17,6 +17,7 @@ plan, including the failure-mode matrix (ADR Decision 7):
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import uuid
 
@@ -113,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
+    except subprocess.CalledProcessError as e:
+        # Include pi's stderr (e.g. "Model ... not found") so the cause is
+        # diagnosable; the exception repr alone omits it.
+        detail = f": {e.stderr.strip()[-500:]}" if e.stderr else ""
+        print(f"pi-review: pi invocation failed: {e}{detail}", file=sys.stderr)
+        return 1  # fail-closed: infra error
     except Exception as e:
         print(f"pi-review: pi invocation failed: {e}", file=sys.stderr)
         return 1  # fail-closed: infra error

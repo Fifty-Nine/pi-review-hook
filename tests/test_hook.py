@@ -192,7 +192,21 @@ def test_pi_invocation_error_fails_closed(
 ):
     _capture_run_review(
         monkeypatch,
-        subprocess.CalledProcessError(1, ["pi"], "out", "boom"),
+        subprocess.CalledProcessError(1, ["pi"], "out", "Model not found\n"),
+    )
+    assert hook.main([]) == 1
+    err = capsys.readouterr().err
+    assert "pi invocation failed" in err
+    # pi's stderr is surfaced so the cause is diagnosable
+    assert "Model not found" in err
+
+
+def test_pi_invocation_error_without_stderr_fails_closed(
+    mock_git, mock_pi_available, monkeypatch, capsys
+):
+    _capture_run_review(
+        monkeypatch,
+        subprocess.CalledProcessError(1, ["pi"], "out", ""),
     )
     assert hook.main([]) == 1
     assert "pi invocation failed" in capsys.readouterr().err
