@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -163,3 +164,44 @@ def test_get_extension_path_exists() -> None:
     path = pi_runner.get_extension_path()
     assert path.endswith("extension.ts")
     assert __import__("pathlib").Path(path).exists()
+
+
+def test_stage_extension_copies_into_session_dir_parent(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """The extension passed to pi must live inside the mounted cwd.
+
+    pi-jailed's bubblewrap sandbox only mounts the cwd (plus pi's own
+    runtime closure), so a store/venv extension path is invisible to pi.
+    Staging a copy under the session dir keeps it reachable.
+    """
+    src = pi_runner.get_extension_path()
+    session_dir = str(tmp_path / ".git" / "pi-reviewer" / "sessions")
+    staged = pi_runner.stage_extension(src, session_dir)
+
+    assert staged == str(tmp_path / ".git" / "pi-reviewer" / "extension.ts")
+    assert Path(staged).exists()
+    assert Path(staged).read_text() == Path(src).read_text()
+
+
+def test_run_review_passes_staged_extension_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """The --extension arg must point inside the session dir, not at the
+    bundled store/venv path."""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _fake_run("")
+
+    monkeypatch.setattr(pi_runner.subprocess, "run", fake_run)
+    session_dir = str(tmp_path / ".git" / "pi-reviewer" / "sessions")
+    pi_runner.run_review(**{**BASE_ARGS, "session_dir": session_dir})
+
+    cmd = captured["cmd"]
+    ext_idx = cmd.index("--extension")
+    ext_path = cmd[ext_idx + 1]
+    assert ext_path == str(tmp_path / ".git" / "pi-reviewer" / "extension.ts")
+    assert Path(ext_path).exists()

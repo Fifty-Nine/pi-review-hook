@@ -47,6 +47,30 @@ def get_extension_path() -> str:
     )
 
 
+def stage_extension(extension_path: str, session_dir: str) -> str:
+    """Copy the bundled extension into the mounted working directory.
+
+    pi-jailed runs pi inside a jail.nix bubblewrap sandbox that mounts
+    only the current working directory (mount-cwd) plus pi's own runtime
+    closure. A bundled extension path (nix store, venv site-packages,
+    source checkout) is therefore invisible to pi inside the jail. Staging
+    a copy under the session directory — which lives inside the repo, i.e.
+    the mounted cwd — keeps the extension reachable regardless of how the
+    hook was installed.
+    """
+    session_path = Path(session_dir)
+    session_path.mkdir(parents=True, exist_ok=True)
+    staged = session_path.parent / "extension.ts"
+    if staged.exists():
+        # Overwrite any stale copy. The bundled file is read-only in the
+        # nix store, and a previous copy may have inherited that mode, so
+        # unlink (needs only directory write permission) rather than
+        # open-for-write.
+        staged.unlink()
+    shutil.copyfile(extension_path, staged)
+    return str(staged)
+
+
 def run_review(
     pi_binary: str,
     model: str,
@@ -65,7 +89,7 @@ def run_review(
     Raises subprocess.CalledProcessError if pi itself fails (non-zero
     exit, crash, etc.).
     """
-    extension_path = get_extension_path()
+    extension_path = stage_extension(get_extension_path(), session_dir)
 
     cmd = [
         pi_binary,
@@ -94,9 +118,6 @@ def run_review(
         "--print",  # non-interactive: process prompt and exit
         user_prompt,
     ]
-
-    # Ensure session dir exists
-    Path(session_dir).mkdir(parents=True, exist_ok=True)
 
     proc = subprocess.run(
         cmd,
