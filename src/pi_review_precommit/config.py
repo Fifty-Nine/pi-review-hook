@@ -21,6 +21,7 @@ class Config:
     system_prompt: str
     session_dir: str  # relative to repo root, e.g. ".git/pi-reviewer/sessions"
     system_prompt_file: str | None = None
+    archive_sessions: bool = False
 
 
 DEFAULT_MODEL = "glm-5.2"
@@ -30,6 +31,11 @@ DEFAULT_SESSION_DIR = ".git/pi-reviewer/sessions"
 
 def _env_or_default(env_key: str, default: str) -> str:
     return os.environ.get(env_key, default)
+
+
+def _env_flag(env_key: str) -> bool:
+    """Parse a boolean environment variable (1/true/yes/on)."""
+    return os.environ.get(env_key, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def parse_args(argv: list[str] | None = None) -> Config:
@@ -66,6 +72,13 @@ def parse_args(argv: list[str] | None = None) -> Config:
         default=None,
         help=f"Session directory (default: {DEFAULT_SESSION_DIR})",
     )
+    parser.add_argument(
+        "--archive-sessions",
+        action="store_true",
+        default=None,
+        help="On approval, archive the pi session as .tar.gz instead of "
+        "deleting it (env: PI_REVIEW_ARCHIVE_SESSIONS=1).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -96,4 +109,6 @@ def parse_args(argv: list[str] | None = None) -> Config:
         system_prompt=system_prompt or "",  # empty = use built-in default in prompts.py
         session_dir=session_dir,
         system_prompt_file=args.system_prompt_file,
+        archive_sessions=bool(args.archive_sessions)
+        or _env_flag("PI_REVIEW_ARCHIVE_SESSIONS"),
     )

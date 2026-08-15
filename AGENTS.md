@@ -52,7 +52,8 @@ git commit
   ├─ no tool call found? → exit 1 (fail-closed: non-compliance)
   ├─ pi process crashed/errored? → exit 1 (fail-closed: infra error)
   ├─ decision == "go"? → log approving comments to .git/pi-reviewer/reviews/,
-  │                     print summary/suggestions, clear all state, exit 0
+  │                     print summary/suggestions, clear all state
+  │                     (archive session to .tar.gz if enabled), exit 0
   └─ decision == "no-go"? → record rejected tree hash + issues, print issues, exit 1
 ```
 
@@ -104,6 +105,7 @@ CLI args (pre-commit `args`) > env vars (PI_REVIEW_*) > built-in defaults
 | pi binary | `--pi-binary` | `PI_REVIEW_PI_BINARY` | `pi` |
 | System prompt | `--system-prompt` / `--system-prompt-file` | `PI_REVIEW_SYSTEM_PROMPT` | Built-in reviewer prompt |
 | Session dir | `--session-dir` | `PI_REVIEW_SESSION_DIR` | `.git/pi-reviewer/sessions` |
+| Archive sessions | `--archive-sessions` | `PI_REVIEW_ARCHIVE_SESSIONS` | off (delete on go) |
 
 **Note**: default binary is `pi`, not `pi-jailed`. The `pi-jailed` variant is
 NixOS-specific (bubblewrap-sandboxed). NixOS consumers override with
@@ -292,6 +294,8 @@ present in `dist/*.whl`.
 - [x] Extension integration verified under real pi (tool call + NDJSON)
 - [x] Go-decision review log: comments persisted to `.git/pi-reviewer/reviews/`
       and printed at commit time
+- [x] Opt-in session archiving: `--archive-sessions` / `PI_REVIEW_ARCHIVE_SESSIONS`
+      tars the session to `.git/pi-reviewer/archives/` instead of deleting on go
 - [ ] End-to-end manual testing via `pre-commit try-repo`
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)

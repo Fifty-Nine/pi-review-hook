@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tarfile
 from datetime import datetime
 from pathlib import Path
 
@@ -44,15 +45,47 @@ def save_state(state: dict) -> None:
     state_path().write_text(json.dumps(state, indent=2))
 
 
-def clear_state(session_dir: str = ".git/pi-reviewer/sessions") -> None:
-    """Clear all state: hook state file + pi session directory."""
+def clear_state(
+    session_dir: str = ".git/pi-reviewer/sessions",
+    archive: bool = False,
+    session_id: str | None = None,
+) -> None:
+    """Clear all state: hook state file + pi session directory.
+
+    If ``archive`` is set, the session directory is compressed to
+    ``<session-dir-parent>/archives/`` first (opt-in, so prior sessions can
+    be resurrected for interrogation) instead of being deleted outright.
+    """
     p = state_path()
     if p.exists():
         p.unlink()
 
     sdir = sessions_path(session_dir)
     if sdir.exists():
+        if archive:
+            archive_sessions(session_dir, session_id)
         shutil.rmtree(sdir)
+
+
+def archive_sessions(
+    session_dir: str = ".git/pi-reviewer/sessions",
+    session_id: str | None = None,
+) -> Path:
+    """Compress the session directory into ``<parent>/archives/``.
+
+    Returns the tarball path. The archive keeps the full pi conversation
+    history so a prior review session can be resurrected later, e.g.
+    ``pi --session <id> --session-dir <extracted-dir>``.
+    """
+    sdir = sessions_path(session_dir)
+    archives_dir = sdir.parent / "archives"
+    archives_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    stem = session_id or "sessions"
+    path = archives_dir / f"{stem}-{ts}.tar.gz"
+    with tarfile.open(path, "w:gz") as tar:
+        tar.add(sdir, arcname=sdir.name)
+    return path
 
 
 def record_rejection(session_id: str, tree_hash: str, issues: list | None) -> None:

@@ -54,6 +54,28 @@ def test_cli_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.session_dir == ".git/cli"
 
 
+def test_archive_sessions_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PI_REVIEW_ARCHIVE_SESSIONS", raising=False)
+    assert parse_args([]).archive_sessions is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on"])
+def test_archive_sessions_env_on(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("PI_REVIEW_ARCHIVE_SESSIONS", value)
+    assert parse_args([]).archive_sessions is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "off", ""])
+def test_archive_sessions_env_off(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("PI_REVIEW_ARCHIVE_SESSIONS", value)
+    assert parse_args([]).archive_sessions is False
+
+
+def test_archive_sessions_cli_flag_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PI_REVIEW_ARCHIVE_SESSIONS", "0")
+    assert parse_args(["--archive-sessions"]).archive_sessions is True
+
+
 def test_system_prompt_cli_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PI_REVIEW_SYSTEM_PROMPT", "env prompt")
     cfg = parse_args(["--system-prompt", "cli prompt"])

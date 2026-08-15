@@ -36,8 +36,28 @@ repos:
 | pi binary | `--pi-binary` | `PI_REVIEW_PI_BINARY` | `pi` |
 | System prompt | `--system-prompt` | `PI_REVIEW_SYSTEM_PROMPT` | Built-in |
 | Session dir | `--session-dir` | `PI_REVIEW_SESSION_DIR` | `.git/pi-reviewer/sessions` |
+| Archive sessions | `--archive-sessions` | `PI_REVIEW_ARCHIVE_SESSIONS` | off (delete on go) |
 
 Precedence: CLI args > env vars > defaults.
+
+## Review log & session archiving
+
+- Every approved ("go") round is persisted as JSON in
+  `.git/pi-reviewer/reviews/<timestamp>-<tree-hash>.json` — session id,
+  round, decision, summary, suggestions, issues — so the approving comments
+  survive the state clear. They are also printed to stderr at commit time.
+  Rejected rounds live in `.git/pi-reviewer/state.json` (cleared on the next
+  go).
+- With `--archive-sessions` (or `PI_REVIEW_ARCHIVE_SESSIONS=1`), the pi
+  session directory is compressed to
+  `.git/pi-reviewer/archives/<session-id>-<timestamp>.tar.gz` on approval
+  instead of being deleted. Prior sessions can then be resurrected for
+  interrogation:
+
+  ```bash
+  tar -xzf .git/pi-reviewer/archives/*.tar.gz -C /tmp
+  pi --session <session-id> --session-dir /tmp/sessions
+  ```
 
 ## Provider / model notes
 

@@ -248,3 +248,40 @@ def test_git_failure_fails_closed(mock_pi_available, monkeypatch, capsys):
     monkeypatch.setattr(hook, "get_staged_tree_hash", boom)
     assert hook.main() == 1
     assert "not a git repo" in capsys.readouterr().err
+
+
+def test_go_with_archive_flag_keeps_tarball(mock_git, mock_pi_available, monkeypatch):
+    from pathlib import Path
+
+    from pi_review_precommit.state import load_state, record_rejection
+
+    _capture_run_review(monkeypatch, {"decision": "go"})
+    record_rejection("pi-review-old", "oldtree", None)
+    # Simulate the pi session dir that will be archived
+    sdir = Path(".git") / "pi-reviewer" / "sessions"
+    (sdir / "pi-review-old").mkdir(parents=True)
+    (sdir / "pi-review-old" / "session.json").write_text("{}")
+
+    assert hook.main(["--archive-sessions"]) == 0
+    assert load_state() is None
+    tarballs = list((Path(".git") / "pi-reviewer" / "archives").glob("*.tar.gz"))
+    assert len(tarballs) == 1
+    assert tarballs[0].name.startswith("pi-review-old-")
+
+
+def test_go_without_archive_flag_deletes_session(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pathlib import Path
+
+    from pi_review_precommit.state import record_rejection
+
+    _capture_run_review(monkeypatch, {"decision": "go"})
+    record_rejection("pi-review-old", "oldtree", None)
+    sdir = Path(".git") / "pi-reviewer" / "sessions"
+    (sdir / "pi-review-old").mkdir(parents=True)
+    (sdir / "pi-review-old" / "session.json").write_text("{}")
+
+    assert hook.main() == 0
+    assert not sdir.exists()
+    assert not (Path(".git") / "pi-reviewer" / "archives").exists()

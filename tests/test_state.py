@@ -63,6 +63,8 @@ def test_clear_state_removes_state_and_sessions(tmp_path) -> None:
     assert not state.state_path().exists()
     assert not state.load_state()
     assert not sessions.exists()
+    # default: no archive is produced
+    assert not (tmp_path / ".git" / "pi-reviewer" / "archives").exists()
 
 
 def test_clear_state_custom_session_dir(tmp_path) -> None:
@@ -103,3 +105,36 @@ def test_record_approval_defaults_on_bare_go() -> None:
     assert payload["summary"] is None
     assert payload["suggestions"] is None
     assert payload["issues"] is None
+
+
+def test_clear_state_archive_creates_tarball(tmp_path) -> None:
+    import tarfile
+
+    state.record_rejection("s1", "tree1", None)
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions" / "s1"
+    sessions.mkdir(parents=True)
+    (sessions / "session.json").write_text('{"id": "s1"}')
+
+    state.clear_state(session_id="s1", archive=True)
+
+    # state file + session dir gone
+    assert not state.state_path().exists()
+    assert not sessions.exists()
+    # tarball exists and contains the session files
+    archives = tmp_path / ".git" / "pi-reviewer" / "archives"
+    tarballs = list(archives.glob("s1-*.tar.gz"))
+    assert len(tarballs) == 1
+    with tarfile.open(tarballs[0], "r:gz") as tar:
+        names = tar.getnames()
+    assert any(n.endswith("s1/session.json") for n in names)
+
+
+def test_archive_sessions_returns_path(tmp_path) -> None:
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions" / "s1"
+    sessions.mkdir(parents=True)
+    (sessions / "session.json").write_text("{}")
+
+    path = state.archive_sessions(session_id="s1")
+    assert path.exists()
+    assert path.name.startswith("s1-")
+    assert path.suffix == ".gz"
