@@ -5,7 +5,7 @@
 repos:
   # Dogfood: review every commit in this repo with the pi-review hook.
   - repo: git@github.com:Fifty-Nine/pi-review-hook.git
-    rev: 15fa01b7ce3b623cfb854c905adffe749cb745e2
+    rev: 1d548a0188bf8752bf5399bfac6ace8bbcb54bb8
     hooks:
       - id: pi-review
         args: ["--model", "ollama-cloud/glm-5.2", "--archive-sessions"]
