@@ -1,0 +1,9 @@
+- id: pi-review
+  name: pi-review
+  description: Agentic AI code review using pi with context retention across rounds.
+  entry: pi-review
+  language: python
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  stages: [pre-commit]
