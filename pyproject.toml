@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 pi-review = "pi_review_precommit.hook:main"
+pi-review-notes = "pi_review_precommit.notes:main"
 
 [build-system]
 requires = ["hatchling"]
