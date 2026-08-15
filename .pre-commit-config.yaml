@@ -1,11 +1,8 @@
-# Self-hosted hooks for developing this repo (linting/formatting).
+# Self-hosted hooks for developing this repo.
+# ruff is deliberately NOT a pre-commit hook here: the PyPI binary can't run
+# on NixOS (stub-ld), which fails every commit. Run it via `make lint` /
+# `make fmt` (nixpkgs#ruff) or CI instead.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.3
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
   # Dogfood: review every commit in this repo with the pi-review hook.
   - repo: git@github.com:Fifty-Nine/pi-review-hook.git
     rev: 6e3b5c4087bbfac6fe53bf667fa7f8b78cff798a
