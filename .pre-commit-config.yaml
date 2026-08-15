@@ -6,3 +6,9 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+  # Dogfood: review every commit in this repo with the pi-review hook.
+  - repo: git@github.com:Fifty-Nine/pi-review-hook.git
+    rev: 6e3b5c4087bbfac6fe53bf667fa7f8b78cff798a
+    hooks:
+      - id: pi-review
+        args: ["--model", "ollama/glm-5.2:cloud"]
