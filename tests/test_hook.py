@@ -50,7 +50,7 @@ def _capture_run_review(monkeypatch: pytest.MonkeyPatch, decision_args: dict | N
 def test_first_round_go_passes(mock_git, mock_pi_available, monkeypatch):
     captured = _capture_run_review(monkeypatch, {"decision": "go"})
 
-    assert hook.main() == 0
+    assert hook.main([]) == 0
 
     # First-round prompt used
     assert "Staged files" in captured["user_prompt"]
@@ -63,7 +63,7 @@ def test_go_clears_state(mock_git, mock_pi_available, monkeypatch):
     _capture_run_review(monkeypatch, {"decision": "go"})
     record_rejection("pi-review-old", "oldtree", None)
 
-    assert hook.main() == 0  # go clears state
+    assert hook.main([]) == 0  # go clears state
     assert load_state() is None
 
 
@@ -81,7 +81,7 @@ def test_go_prints_summary_and_suggestions_and_logs(
         },
     )
 
-    assert hook.main() == 0
+    assert hook.main([]) == 0
     err = capsys.readouterr().err
     assert "Changes approved" in err
     assert "LGTM with minor notes" in err
@@ -109,7 +109,7 @@ def test_first_round_nogo_blocks_and_records(
     }
     _capture_run_review(monkeypatch, decision_args)
 
-    assert hook.main() == 1
+    assert hook.main([]) == 1
     err = capsys.readouterr().err
     assert "Changes rejected" in err
     assert "Needs fixes" in err
@@ -145,7 +145,7 @@ def test_same_tree_auto_rejects_without_pi(
 
     monkeypatch.setattr(hook, "run_review", fake_run_review)
 
-    assert hook.main() == 1
+    assert hook.main([]) == 1
     assert called["n"] == 0  # pi never invoked
     assert "identical to a previously rejected review" in capsys.readouterr().err
 
@@ -167,7 +167,7 @@ def test_followup_round_resumes_session_with_previous_issues(
 
     captured = _capture_run_review(monkeypatch, {"decision": "go"})
 
-    assert hook.main() == 0
+    assert hook.main([]) == 0
     assert captured["session_id"] == "pi-review-abc"  # session resumed
     prompt = captured["user_prompt"]
     assert "review round 2" in prompt
@@ -184,7 +184,7 @@ def test_followup_round_resumes_session_with_previous_issues(
 
 def test_pi_not_found_fails_open(mock_git, monkeypatch):
     monkeypatch.setattr(hook, "find_pi", lambda binary: None)
-    assert hook.main() == 0
+    assert hook.main([]) == 0
 
 
 def test_pi_invocation_error_fails_closed(
@@ -194,7 +194,7 @@ def test_pi_invocation_error_fails_closed(
         monkeypatch,
         subprocess.CalledProcessError(1, ["pi"], "out", "boom"),
     )
-    assert hook.main() == 1
+    assert hook.main([]) == 1
     assert "pi invocation failed" in capsys.readouterr().err
 
 
@@ -202,7 +202,7 @@ def test_no_decision_tool_call_fails_closed(
     mock_git, mock_pi_available, monkeypatch, capsys
 ):
     _capture_run_review(monkeypatch, None)
-    assert hook.main() == 1
+    assert hook.main([]) == 1
     assert "did not produce a decision" in capsys.readouterr().err
 
 
@@ -210,7 +210,7 @@ def test_unrecognized_decision_fails_closed(
     mock_git, mock_pi_available, monkeypatch, capsys
 ):
     _capture_run_review(monkeypatch, {"decision": "maybe"})
-    assert hook.main() == 1
+    assert hook.main([]) == 1
     assert "Unrecognized decision" in capsys.readouterr().err
 
 
@@ -236,7 +236,7 @@ def test_empty_diff_exits_zero_without_pi(monkeypatch, capsys):
 
     record_rejection("pi-review-abc", TREE, [{"description": "x"}])
 
-    assert hook.main() == 0
+    assert hook.main([]) == 0
     assert called["n"] == 0
     assert capsys.readouterr().out == ""
 
@@ -246,7 +246,7 @@ def test_git_failure_fails_closed(mock_pi_available, monkeypatch, capsys):
         raise RuntimeError("git write-tree failed: not a git repo")
 
     monkeypatch.setattr(hook, "get_staged_tree_hash", boom)
-    assert hook.main() == 1
+    assert hook.main([]) == 1
     assert "not a git repo" in capsys.readouterr().err
 
 
@@ -282,6 +282,6 @@ def test_go_without_archive_flag_deletes_session(
     (sdir / "pi-review-old").mkdir(parents=True)
     (sdir / "pi-review-old" / "session.json").write_text("{}")
 
-    assert hook.main() == 0
+    assert hook.main([]) == 0
     assert not sdir.exists()
     assert not (Path(".git") / "pi-reviewer" / "archives").exists()
