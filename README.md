@@ -71,7 +71,9 @@ Precedence: CLI args > env vars > defaults.
   `args: ["--model", "ollama/glm-5.2:cloud"]`
 - The tool allowlist is `read,grep,find,ls,submit_review_decision` — the
   reviewer can explore surrounding code read-only but cannot run `bash`,
-  edit files, or write files.
+  edit files, or write files. Note that user-installed pi extensions still
+  load their code at startup (providers, event handlers); only their
+  *tools* are disabled by the allowlist.
 
 ## Escape hatch
 
