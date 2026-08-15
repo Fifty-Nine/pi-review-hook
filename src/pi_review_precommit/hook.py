@@ -36,6 +36,7 @@ from pi_review_precommit.state import (
     get_round_number,
     get_session_id,
     is_tree_rejected,
+    record_approval,
     record_rejection,
     save_state,
 )
@@ -129,8 +130,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # 9. Handle decision
     if decision == "go":
+        summary = decision_args.get("summary")
+        suggestions = decision_args.get("suggestions")
+        # Persist the approving comments before the state clear removes
+        # the session, and surface them at commit time.
+        record_approval(session_id, tree_hash, round_number, decision_args)
         clear_state(config.session_dir)
         print("pi-review: Changes approved.", file=sys.stderr)
+        if summary:
+            print(f"  Summary: {summary}", file=sys.stderr)
+        if suggestions:
+            print("  Suggestions:", file=sys.stderr)
+            for s in suggestions:
+                print(f"    - {s}", file=sys.stderr)
         return 0
     elif decision == "no-go":
         issues = decision_args.get("issues")

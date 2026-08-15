@@ -12,7 +12,9 @@ rounds.
 - If you amend and retry, pi resumes the review session with context from
   previous rounds — it knows what was already raised and is proportionally
   lenient on resolved issues.
-- Once a go decision is reached, the review context is cleared.
+- Once a go decision is reached, the review context is cleared — but the
+  approving comments (summary/suggestions) are printed at commit time and
+  persisted under `.git/pi-reviewer/reviews/` first.
 
 ## Installation
 

@@ -51,7 +51,8 @@ git commit
   │  toolName == "submit_review_decision"
   ├─ no tool call found? → exit 1 (fail-closed: non-compliance)
   ├─ pi process crashed/errored? → exit 1 (fail-closed: infra error)
-  ├─ decision == "go"? → clear all state, exit 0
+  ├─ decision == "go"? → log approving comments to .git/pi-reviewer/reviews/,
+  │                     print summary/suggestions, clear all state, exit 0
   └─ decision == "no-go"? → record rejected tree hash + issues, print issues, exit 1
 ```
 
@@ -286,9 +287,11 @@ present in `dist/*.whl`.
 - [x] `hook.py` — main entry point, full flow (empty-diff check runs before
       same-tree rejection so a stale rejection can't block an empty index)
 - [x] `.pre-commit-hooks.yaml` — created
-- [x] Unit tests (33 passing: config, state, pi_runner, hook)
-- [x] Wheel build verified — `extension.ts` bundled via uv_build
+- [x] Unit tests (36 passing: config, state, pi_runner, hook)
+- [x] Wheel build verified — `extension.ts` bundled via hatchling
 - [x] Extension integration verified under real pi (tool call + NDJSON)
+- [x] Go-decision review log: comments persisted to `.git/pi-reviewer/reviews/`
+      and printed at commit time
 - [ ] End-to-end manual testing via `pre-commit try-repo`
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)

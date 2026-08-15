@@ -1,8 +1,9 @@
 """State management for review sessions under .git/pi-reviewer/.
 
 Holds the hook coordination state (session id, rejected tree hashes, round
-counter). The pi conversation history itself lives in the pi session store
-under ``<session-dir>/<session-id>`` and is managed by pi, not by this module.
+counter) plus the persistent review log. The pi conversation history itself
+lives in the pi session store under ``<session-dir>/<session-id>`` and is
+managed by pi, not by this module.
 
 See ADR Decision 3 (accumulate until go) and Decision 4 (same-tree
 auto-reject).
@@ -12,11 +13,13 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 STATE_DIR = Path(".git") / "pi-reviewer"
 STATE_FILE = STATE_DIR / "state.json"
 SESSIONS_SUBDIR = "sessions"
+REVIEWS_DIR = STATE_DIR / "reviews"
 
 
 def state_path() -> Path:
@@ -89,3 +92,32 @@ def get_round_number() -> int:
     if not state:
         return 0
     return state.get("round", 0)
+
+
+def record_approval(
+    session_id: str,
+    tree_hash: str,
+    round_number: int,
+    decision_args: dict,
+) -> Path:
+    """Persist the final (go) review round before the state clear.
+
+    The approving comments (summary, suggestions, issues) would otherwise
+    be lost when ``clear_state`` removes the session; this keeps them for
+    later reference under ``.git/pi-reviewer/reviews/``.
+    """
+    now = datetime.now()
+    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    path = REVIEWS_DIR / f"{now.strftime('%Y%m%dT%H%M%S')}-{tree_hash}.json"
+    payload = {
+        "timestamp": now.isoformat(timespec="seconds"),
+        "session_id": session_id,
+        "tree_hash": tree_hash,
+        "round": round_number,
+        "decision": decision_args.get("decision", "go"),
+        "summary": decision_args.get("summary"),
+        "suggestions": decision_args.get("suggestions"),
+        "issues": decision_args.get("issues"),
+    }
+    path.write_text(json.dumps(payload, indent=2))
+    return path

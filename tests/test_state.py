@@ -1,5 +1,7 @@
 """Tests for state.py: state management under .git/pi-reviewer/."""
 
+import json
+
 import pytest
 
 from pi_review_precommit import state
@@ -71,3 +73,33 @@ def test_clear_state_custom_session_dir(tmp_path) -> None:
     state.clear_state(session_dir=str(custom))
     assert not state.state_path().exists()
     assert not custom.exists()
+
+
+def test_record_approval_writes_review_log() -> None:
+    result = state.record_approval(
+        "s1",
+        "tree123",
+        2,
+        {
+            "decision": "go",
+            "summary": "looks good",
+            "suggestions": ["consider adding a test"],
+            "issues": None,
+        },
+    )
+    assert result.exists()
+    payload = json.loads(result.read_text())
+    assert payload["session_id"] == "s1"
+    assert payload["tree_hash"] == "tree123"
+    assert payload["round"] == 2
+    assert payload["decision"] == "go"
+    assert payload["summary"] == "looks good"
+    assert payload["suggestions"] == ["consider adding a test"]
+
+
+def test_record_approval_defaults_on_bare_go() -> None:
+    result = state.record_approval("s1", "tree1", 0, {"decision": "go"})
+    payload = json.loads(result.read_text())
+    assert payload["summary"] is None
+    assert payload["suggestions"] is None
+    assert payload["issues"] is None

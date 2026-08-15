@@ -1,5 +1,6 @@
 """Integration tests for hook.py: full hook flow with mocked pi + git."""
 
+import json
 import subprocess
 
 import pytest
@@ -64,6 +65,33 @@ def test_go_clears_state(mock_git, mock_pi_available, monkeypatch):
 
     assert hook.main() == 0  # go clears state
     assert load_state() is None
+
+
+def test_go_prints_summary_and_suggestions_and_logs(
+    mock_git, mock_pi_available, monkeypatch, capsys
+):
+    from pi_review_precommit.state import REVIEWS_DIR
+
+    _capture_run_review(
+        monkeypatch,
+        {
+            "decision": "go",
+            "summary": "LGTM with minor notes",
+            "suggestions": ["add a test", "rename x"],
+        },
+    )
+
+    assert hook.main() == 0
+    err = capsys.readouterr().err
+    assert "Changes approved" in err
+    assert "LGTM with minor notes" in err
+    assert "add a test" in err
+
+    logs = list(REVIEWS_DIR.glob("*.json"))
+    assert len(logs) == 1
+    payload = json.loads(logs[0].read_text())
+    assert payload["summary"] == "LGTM with minor notes"
+    assert payload["suggestions"] == ["add a test", "rename x"]
 
 
 # --- First round: no-go ----------------------------------------------------
