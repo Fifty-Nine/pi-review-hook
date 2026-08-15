@@ -94,11 +94,14 @@ repos:
     hooks:
       - id: pi-review
         args: ["--model", "ollama-cloud/glm-5.2"]
+      - id: pi-review-notes   # optional: git notes for finished reviews
 ```
 
-Then `pre-commit install` as usual. The hook is `always_run: true`,
-`pass_filenames: false`, and `require_serial: true` (it computes its own diff
-and is stateful), so it runs on every commit regardless of staged file types.
+Then `pre-commit install` as usual. Both hooks are `always_run: true`,
+`pass_filenames: false`, and `require_serial: true` (they compute their own
+diff / commit lookup and are stateful), so they run on every commit
+regardless of staged file types. `pi-review-notes` runs at the **post-commit**
+stage and takes no arguments.
 
 **NixOS note:** the build backend is `hatchling` (pure Python) specifically
 because `uv_build`'s compiled binary can't run on NixOS inside pre-commit's pip
@@ -201,6 +204,39 @@ A "no-go" is required when:
 The file is auto-discovered on every review. Disable with
 `--no-review-guidelines` or `PI_REVIEW_NO_REVIEW_GUIDELINES=1`.
 
+## Git notes for finished reviews
+
+Add the optional `pi-review-notes` hook id to get a **git note on every
+commit** describing its review. The hook runs at the post-commit stage: it
+finds the just-created commit whose tree matches a finished (go) review and
+attaches the review printout under a dedicated `refs/notes/pi-review` ref:
+
+```
+Decision: go
+Summary: LGTM with minor notes
+Suggestions:
+- add a test
+Session archive: ./.git/pi-reviewer/archive/session-<id>.jsonl.gz
+```
+
+The `Session archive:` line appears only when `--archive-sessions` is on.
+Commits with **no** associated review (e.g. `SKIP=pi-review`, `--no-verify`,
+merges) get a brief "no review" audit note, so the note history is a
+complete audit trail of what was and wasn't reviewed.
+
+View the notes:
+
+```bash
+git log --notes=pi-review                          # notes inline in git log
+git notes --ref=refs/notes/pi-review show HEAD     # one commit's note
+# one-time: make plain `git log` show the notes too
+git config notes.displayRef refs/notes/pi-review
+```
+
+Notes live in a ref, not in commits, so they are **not pushed by default**.
+Share them with `git push origin refs/notes/pi-review`. Skip the hook with
+`SKIP=pi-review-notes`.
+
 ## Escape hatch
 
 ```bash
@@ -240,6 +276,9 @@ before relying on it:
   model's context window. Not truncated or summarized in v1.
 - **State lives under `.git/pi-reviewer/`** (not committed): `state.json`,
   `sessions/`, `reviews/`, and `archive/`. It is per-repo and per-working-copy.
+- **Git notes are not pushed by default.** The `refs/notes/pi-review` ref is
+  local until you `git push origin refs/notes/pi-review`; collaborators won't
+  see the notes otherwise.
 - **pre-commit hides passed-hook output.** On a successful review the printed
   summary/suggestions aren't shown unless you run with `--verbose`. The
   authoritative record is the JSON in `.git/pi-reviewer/reviews/`.
@@ -268,6 +307,7 @@ before relying on it:
 | Same tree as a prior rejection | Auto-reject, **no pi call** | 1 |
 | Decision `go` | Clear state (archive if enabled), proceed | 0 |
 | Decision `no-go` | Record rejection, print issues, block | 1 |
+| Post-commit note attach fails | Non-zero exit, review log kept for retry (commit already happened) | 1 |
 
 When pi itself fails, the hook now includes the tail of pi's stderr in its
 message so the cause (e.g. "Model ... not found") is diagnosable.

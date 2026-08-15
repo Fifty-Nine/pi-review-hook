@@ -57,6 +57,15 @@ git commit
   │                     print summary/suggestions, clear all state
   │                     (archive session to .jsonl.gz if enabled), exit 0
   └─ decision == "no-go"? → record rejected tree hash + issues, print issues, exit 1
+
+(commit created)
+  │
+  └─ post-commit runs pi-review-notes hook (if enabled)
+     ├─ resolve HEAD commit + tree hash
+     ├─ review log matches tree? → attach review note to refs/notes/pi-review,
+     │                             delete consumed log (cleanup failure → stderr)
+     ├─ no match? → attach brief "no review" audit note
+     └─ note attach fails? → exit 1 (fail-open but visible: log kept for retry)
 ```
 
 ### State model
@@ -72,8 +81,12 @@ git commit
 │     ],
 │     "round": 2
 │   }
-└── sessions/               # pi session store (managed by pi itself)
-    └── <session-id>/       # conversation history
+├── sessions/               # pi session store (managed by pi itself)
+│   └── <timestamp>_<session-id>.jsonl   # one jsonl file per session
+├── reviews/                # finished (go) review logs, consumed by post-commit
+│   └── <timestamp>-<tree-hash>.json
+└── archive/                # opt-in session archives (gzipped jsonl)
+    └── session-<id>.jsonl.gz
 ```
 
 - **Session accumulates** across rounds until a "go" decision clears it.
@@ -81,7 +94,11 @@ git commit
 - **Same-tree auto-reject**: if `git write-tree` hash matches a prior rejection,
   block without invoking pi. User must amend or `SKIP=pi-review`.
 - **No reset mechanism for v1.** Rely on go-clears + `SKIP=pi-review`.
-- **Go → clear all state** (rm state.json + sessions/ dir).
+- **Go → clear all state** (rm state.json + sessions/ dir; archive first if
+  `--archive-sessions`).
+- **Post-commit notes**: the `pi-review-notes` hook attaches a review note (or
+  a "no review" audit note) to every commit under `refs/notes/pi-review` and
+  deletes the consumed review log. See `notes.py`.
 
 ### The custom pi extension
 
@@ -114,12 +131,17 @@ CLI args (pre-commit `args`) > env vars (PI_REVIEW_*) > built-in defaults
 NixOS-specific (bubblewrap-sandboxed). NixOS consumers override with
 `--pi-binary pi-jailed`.
 
+The optional **`pi-review-notes`** hook id (post-commit stage) takes no
+arguments; it attaches review/audit git notes under `refs/notes/pi-review`
+and is skipped with `SKIP=pi-review-notes`.
+
 ## Module layout (target)
 
 ```
 src/pi_review_precommit/
 ├── __init__.py          # Package init
 ├── hook.py              # Main entry point (console_scripts: pi-review)
+├── notes.py             # Post-commit hook (console_scripts: pi-review-notes)
 ├── config.py            # Argparse + env var configuration
 ├── state.py             # .git/pi-reviewer/ state management
 ├── pi_runner.py         # pi invocation + NDJSON parsing
@@ -291,8 +313,8 @@ present in `dist/*.whl`.
       see note above)
 - [x] `hook.py` — main entry point, full flow (empty-diff check runs before
       same-tree rejection so a stale rejection can't block an empty index)
-- [x] `.pre-commit-hooks.yaml` — created
-- [x] Unit tests (36 passing: config, state, pi_runner, hook)
+- [x] `.pre-commit-hooks.yaml` — created (pi-review + pi-review-notes)
+- [x] Unit tests (89 passing: config, state, pi_runner, hook, notes)
 - [x] Wheel build verified — `extension.ts` bundled via hatchling
 - [x] Extension integration verified under real pi (tool call + NDJSON)
 - [x] Go-decision review log: comments persisted to `.git/pi-reviewer/reviews/`
@@ -303,7 +325,11 @@ present in `dist/*.whl`.
       `--no-review-guidelines`); this repo dogfoods its own REVIEW_GUIDELINES.md
 - [x] Opt-in session archiving: `--archive-sessions` / `PI_REVIEW_ARCHIVE_SESSIONS`
       gzips the session to `.git/pi-reviewer/archive/session-<id>.jsonl.gz`
-      instead of deleting on go
+      instead of deleting on go; `record_approval` records the archive path
+- [x] `pi-review-notes` post-commit hook: attaches review printout (or "no
+      review" audit note) to every commit under `refs/notes/pi-review`;
+      deletes the consumed review log; fail-open but visible on note failure
+- [x] README/AGENTS docs for git notes + jsonl.gz archives
 - [ ] End-to-end manual testing via `pre-commit try-repo`
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)
@@ -321,6 +347,11 @@ present in `dist/*.whl`.
   completely different one, the session context may be polluted. The
   follow-up prompt tells pi "this may be new or continuation." Reset
   strategy to be guided by implementation experience.
+- Amend-after-go: the review log is consumed by the original commit, so an
+  amended commit (same tree) gets a "no review" audit note. Accepted
+  consequence of the cleanup decision.
+- The `refs/notes/pi-review` notes ref is not pushed by default; sharing
+  notes requires `git push origin refs/notes/pi-review`.
 
 ## Reference links
 

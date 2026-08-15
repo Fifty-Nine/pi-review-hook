@@ -7,3 +7,12 @@
   always_run: true
   require_serial: true
   stages: [pre-commit]
+- id: pi-review-notes
+  name: pi-review-notes
+  description: Attach pi-review notes (review printout or no-review audit) to commits.
+  entry: pi-review-notes
+  language: python
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  stages: [post-commit]
