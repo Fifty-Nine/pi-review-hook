@@ -330,7 +330,9 @@ present in `dist/*.whl`.
       review" audit note) to every commit under `refs/notes/pi-review`;
       deletes the consumed review log; fail-open but visible on note failure
 - [x] README/AGENTS docs for git notes + jsonl.gz archives
-- [ ] End-to-end manual testing via `pre-commit try-repo`
+- [x] End-to-end manual testing via `pre-commit try-repo` (scratch-repo E2E:
+      normal review flow, no-match audit note, amend-after-go, note-attach
+      failure + retry, archiving off — all passed)
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)
 
