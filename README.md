@@ -37,6 +37,20 @@ repos:
 
 Precedence: CLI args > env vars > defaults.
 
+## Provider / model notes
+
+- The `--model` pattern must resolve against a provider available to pi.
+  Built-in providers (e.g. google) work out of the box; extension-registered
+  providers such as `ollama` require the provider extension to be installed
+  in pi (the hook deliberately does not pass `--no-extensions`, so provider
+  extensions load normally). Tool safety is enforced via the `--tools`
+  allowlist instead.
+- Example with an ollama-hosted model:
+  `args: ["--model", "ollama/glm-5.2:cloud"]`
+- The tool allowlist is `read,grep,find,ls,submit_review_decision` — the
+  reviewer can explore surrounding code read-only but cannot run `bash`,
+  edit files, or write files.
+
 ## Escape hatch
 
 ```bash
