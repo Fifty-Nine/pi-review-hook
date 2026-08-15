@@ -38,7 +38,8 @@ git commit
   ├─ compute staged tree hash: `git write-tree`
   ├─ tree hash matches prior rejection? → yes: exit 1 (auto-reject, no pi call)
   ├─ load session state from .git/pi-reviewer/state.json
-  ├─ construct prompt (first round vs follow-up with leniency note)
+  ├─ construct prompt (first round vs follow-up with leniency note,
+  │  current date injected so the model doesn't guess the date)
   ├─ invoke: pi --mode json --session-id <id> --model <model> --session-dir <dir>
   │         -e <bundled extension.ts>
   │         --system-prompt "<reviewer prompt>"
@@ -294,6 +295,7 @@ present in `dist/*.whl`.
 - [x] Extension integration verified under real pi (tool call + NDJSON)
 - [x] Go-decision review log: comments persisted to `.git/pi-reviewer/reviews/`
       and printed at commit time
+- [x] Current date injected into review prompts (fixes model date-guessing)
 - [x] Opt-in session archiving: `--archive-sessions` / `PI_REVIEW_ARCHIVE_SESSIONS`
       tars the session to `.git/pi-reviewer/archives/` instead of deleting on go
 - [ ] End-to-end manual testing via `pre-commit try-repo`

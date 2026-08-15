@@ -11,6 +11,7 @@ leniency instruction (ADR Decision 6).
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are an automated code reviewer for a pre-commit hook. Your job is to
@@ -96,12 +97,24 @@ def get_staged_tree_hash() -> str:
     return _run_git(["write-tree"]).strip()
 
 
+def _today() -> str:
+    """Current local date, e.g. 2026-08-14.
+
+    Injected into the review prompts so the model doesn't guess the date
+    (it previously suggested a wrong copyright year because it had no
+    notion of the current date).
+    """
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def build_first_round_prompt(diff: str, files: list[str]) -> str:
     """Build the prompt for the first review round."""
     files_str = "\n".join(f"  - {f}" for f in files)
     return f"""\
 Review the following staged changes and decide whether they are acceptable
 to commit.
+
+Today's date is {_today()}.
 
 ## Staged files
 
@@ -139,6 +152,8 @@ The user has run `git commit` again. This may be a continuation of the
 previous review (the user amended their changes) or a new change entirely;
 we cannot determine which. Review the current staged changes and make your
 decision.
+
+Today's date is {_today()}.
 
 This is review round {round_number + 1}. Be proportionally lenient on
 previously raised issues that appear resolved, but maintain standards on
