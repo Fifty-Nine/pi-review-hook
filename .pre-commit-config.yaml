@@ -8,4 +8,4 @@ repos:
     rev: 0026c0b15cf267d2105c010d576ecda15676f9f7
     hooks:
       - id: pi-review
-        args: ["--model", "ollama/glm-5.2:cloud"]
+        args: ["--model", "ollama/glm-5.2:cloud", "--archive-sessions"]
