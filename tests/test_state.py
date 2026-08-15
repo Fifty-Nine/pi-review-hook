@@ -52,6 +52,34 @@ def test_record_rejection_preserves_session_across_rounds() -> None:
     assert state.get_round_number() == 1
 
 
+def test_record_go_state_keeps_session_and_trees() -> None:
+    state.record_go_state("s1", "approved123", "base456")
+    loaded = state.load_state()
+    assert loaded is not None
+    assert loaded["session_id"] == "s1"
+    assert loaded["approved_tree"] == "approved123"
+    assert loaded["base_tree"] == "base456"
+    assert loaded["rejected_trees"] == []
+    assert loaded["round"] == 0
+    assert state.get_approved_tree() == "approved123"
+    assert state.get_base_tree() == "base456"
+
+
+def test_get_approved_and_base_tree_none_when_missing() -> None:
+    assert state.get_approved_tree() is None
+    assert state.get_base_tree() is None
+
+
+def test_record_rejection_preserves_approved_and_base_tree() -> None:
+    state.record_go_state("s1", "approved123", "base456")
+    state.record_rejection("s1", "tree1", [{"description": "bug"}])
+    loaded = state.load_state()
+    assert loaded is not None
+    assert loaded["approved_tree"] == "approved123"  # unchanged
+    assert loaded["base_tree"] == "base456"  # unchanged
+    assert loaded["round"] == 1
+
+
 def test_clear_state_removes_state_and_sessions(tmp_path) -> None:
     state.record_rejection("s1", "tree1", None)
     # Simulate a pi-created session dir

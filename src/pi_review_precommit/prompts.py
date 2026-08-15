@@ -113,6 +113,10 @@ def _today() -> str:
 
 REVIEW_GUIDELINES_FILE = "REVIEW_GUIDELINES.md"
 
+# The well-known empty tree hash; used as the base for root commits
+# (no HEAD / no parent) so `git diff` still works.
+EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 
 def get_review_guidelines() -> str | None:
     """Read REVIEW_GUIDELINES.md from the repo root, if present.
@@ -140,6 +144,91 @@ def _guidelines_section(guidelines: str | None) -> str:
         "\n\n## Project review guidelines (override the default criteria)\n\n"
         f"{guidelines}"
     )
+
+
+def get_full_change_set_diff(base_tree: str, staged_tree: str) -> str:
+    """Get the full change set diff: base_tree -> staged_tree.
+
+    This is the diff the amended commit will contain (the parent of the
+    approved commit to the staged tree), as opposed to the delta-only
+    ``git diff --cached`` the hook computes for fresh reviews.
+    """
+    return _run_git(["diff", base_tree, staged_tree])
+
+
+def get_head_tree() -> str:
+    """The tree of HEAD (the parent of a fresh commit). Empty tree if no HEAD."""
+    try:
+        return _run_git(["rev-parse", "HEAD^{tree}"]).strip()
+    except RuntimeError:
+        return EMPTY_TREE_HASH
+
+
+def get_parent_tree() -> str:
+    """The tree of HEAD~1 (the parent of an amended commit). Empty tree if none."""
+    try:
+        return _run_git(["rev-parse", "HEAD~1^{tree}"]).strip()
+    except RuntimeError:
+        return EMPTY_TREE_HASH
+
+
+def build_amend_prompt(
+    diff: str,
+    files: list[str],
+    round_number: int,
+    review_guidelines: str | None = None,
+) -> str:
+    """Build the prompt for an amend follow-up review.
+
+    The user amended a previously approved commit. The reviewer sees the
+    FULL change set the amended commit will contain (base -> staged), not
+    just the delta, and is asked to verify the previous feedback was
+    addressed and re-evaluate the whole change.
+
+    Framing by round: round 0 (after a go) -> verify suggestions; round > 0
+    (after a no-go on an amend) -> verify issues + leniency. The previous
+    feedback lives in the resumed session, so it is not injected here.
+    """
+    files_str = "\n".join(f"  - {f}" for f in files)
+
+    if round_number == 0:
+        framing = (
+            "You previously approved this change. The user has amended the "
+            "commit to address your suggestions. Verify your suggestions "
+            "were addressed and re-evaluate the FULL amended change set "
+            "below (you may raise new issues anywhere)."
+        )
+    else:
+        framing = (
+            "You previously rejected this change with issues. The user has "
+            "amended the commit again. Verify the previously raised issues "
+            "were resolved and re-evaluate the FULL amended change set "
+            "below. Be proportionally lenient on previously raised issues "
+            "that appear resolved, but maintain standards on new problems."
+        )
+
+    return f"""\
+The user has run `git commit --amend` on a previously reviewed commit.
+
+{framing}
+
+Today's date is {_today()}.
+
+This is review round {round_number + 1}.
+
+## Staged files
+
+{files_str}
+
+## Full amended change set (base -> staged)
+
+```diff
+{diff}
+```
+{_guidelines_section(review_guidelines)}
+
+Perform your review and call submit_review_decision with your decision.
+"""
 
 
 def build_first_round_prompt(

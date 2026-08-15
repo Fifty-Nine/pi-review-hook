@@ -9,10 +9,17 @@ plan, including the failure-mode matrix (ADR Decision 7):
 | pi invocation fails (crash/API)   | Fail-closed                       | 1    |
 | Non-compliance (no decision tool) | Fail-closed                       | 1    |
 | Unrecognized decision value       | Fail-closed                       | 1    |
-| Decision = "go"                   | Clear state, pass                 | 0    |
+| Decision = "go"                   | Keep state (lazy clear), pass     | 0    |
 | Decision = "no-go"                | Record rejection, block           | 1    |
 | Same tree as previous rejection   | Auto-reject, no pi call           | 1    |
 | Empty staged diff                 | Nothing to review                 | 0    |
+
+Amend flow: on a detected ``git commit --amend`` (process hierarchy on
+Linux, see amend_detect.py) with a previously approved tree, the existing
+session is resumed and the reviewer sees the FULL change set (base ->
+staged) instead of the delta, verifying the previous feedback was
+addressed. After a go the session is kept (lazy clear) so a subsequent
+amend can resume it; it is cleared on the next non-amend commit.
 """
 
 from __future__ import annotations
@@ -21,11 +28,17 @@ import subprocess
 import sys
 import uuid
 
+from pi_review_precommit.amend_detect import AMEND, detect_amend
 from pi_review_precommit.config import parse_args
 from pi_review_precommit.pi_runner import find_pi, run_review
 from pi_review_precommit.prompts import (
+    EMPTY_TREE_HASH,
+    build_amend_prompt,
     build_first_round_prompt,
     build_followup_prompt,
+    get_full_change_set_diff,
+    get_head_tree,
+    get_parent_tree,
     get_previous_issues,
     get_review_guidelines,
     get_staged_diff,
@@ -36,10 +49,13 @@ from pi_review_precommit.prompts import (
 from pi_review_precommit.state import (
     archive_sessions,
     clear_state,
+    get_approved_tree,
+    get_base_tree,
     get_round_number,
     get_session_id,
     is_tree_rejected,
     record_approval,
+    record_go_state,
     record_rejection,
     save_state,
 )
@@ -83,9 +99,42 @@ def main(argv: list[str] | None = None) -> int:
     # 5. Get or create session
     session_id = get_session_id()
     round_number = get_round_number()
+    approved_tree = get_approved_tree()
+    base_tree = get_base_tree()
 
-    if session_id is None:
-        # First review — create new session
+    # 6. Detect amend (process hierarchy + detached-HEAD guard)
+    amend = detect_amend()
+
+    # 7. Select the review path
+    files = get_staged_files()
+    system_prompt = get_system_prompt(config.system_prompt)
+    review_guidelines = get_review_guidelines() if config.review_guidelines else None
+
+    if amend == AMEND and approved_tree is not None:
+        # Amend follow-up: resume the session and review the FULL change
+        # set (base -> staged), verifying the previous feedback was
+        # addressed and re-evaluating the whole change.
+        if session_id is None:
+            # Defensive: approved_tree implies a session, but never crash.
+            session_id = f"pi-review-{uuid.uuid4().hex[:12]}"
+        full_diff = get_full_change_set_diff(base_tree or EMPTY_TREE_HASH, tree_hash)
+        user_prompt = build_amend_prompt(
+            full_diff, files, round_number, review_guidelines
+        )
+    elif round_number > 0:
+        # Existing no-go follow-up: resume session, delta + leniency.
+        previous_issues = get_previous_issues()
+        user_prompt = build_followup_prompt(
+            diff, files, round_number, previous_issues, review_guidelines
+        )
+    else:
+        # Fresh review: clear any kept-after-go state, new session, delta.
+        if session_id is not None:
+            clear_state(
+                config.session_dir,
+                session_id=session_id,
+                archive=config.archive_sessions,
+            )
         session_id = f"pi-review-{uuid.uuid4().hex[:12]}"
         save_state(
             {
@@ -95,19 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
         round_number = 0
-
-    # 6. Construct prompt
-    files = get_staged_files()
-    system_prompt = get_system_prompt(config.system_prompt)
-    review_guidelines = get_review_guidelines() if config.review_guidelines else None
-
-    if round_number == 0:
         user_prompt = build_first_round_prompt(diff, files, review_guidelines)
-    else:
-        previous_issues = get_previous_issues()
-        user_prompt = build_followup_prompt(
-            diff, files, round_number, previous_issues, review_guidelines
-        )
 
     # 7. Invoke pi
     try:
@@ -158,7 +195,15 @@ def main(argv: list[str] | None = None) -> int:
             decision_args,
             archive_path=archive_path,
         )
-        clear_state(config.session_dir, session_id=session_id)
+        # Compute the base tree (parent of the just-approved commit):
+        # amend -> HEAD~1 (amend keeps the parent); fresh -> HEAD.
+        if amend == AMEND:
+            base_tree = get_parent_tree()
+        else:
+            base_tree = get_head_tree()
+        # Keep the session for a potential amend (lazy clear): the session
+        # dir + state stay; cleared on the next non-amend commit.
+        record_go_state(session_id, tree_hash, base_tree)
         print("pi-review: Changes approved.", file=sys.stderr)
         if summary:
             print(f"  Summary: {summary}", file=sys.stderr)

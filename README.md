@@ -52,7 +52,8 @@ pi --mode json --print \
   prose — the decision comes only from the structured tool call.
 - **Session continuity (`--session-id`, `--session-dir`)**: pi's native session
   store holds the conversation across rounds. The hook generates one session
-  id per review cycle and reuses it until a `go` clears it.
+  id per review cycle and reuses it until a `go` (after which it is kept for
+  a potential amend — see below) or a fresh non-amend commit clears it.
 - **A custom tool (`submit_review_decision`)**: defined by a small TypeScript
   extension bundled inside the Python package and loaded with `-e`. Only
   `decision` is a required argument; `issues`, `summary`, and `suggestions`
@@ -125,7 +126,7 @@ Precedence: **CLI args (pre-commit `args`) > env vars (`PI_REVIEW_*`) > defaults
 | pi binary | `--pi-binary` | `PI_REVIEW_PI_BINARY` | `pi` |
 | System prompt | `--system-prompt` / `--system-prompt-file` | `PI_REVIEW_SYSTEM_PROMPT` | built-in reviewer prompt |
 | Session dir | `--session-dir` | `PI_REVIEW_SESSION_DIR` | `.git/pi-reviewer/sessions` |
-| Archive sessions | `--archive-sessions` | `PI_REVIEW_ARCHIVE_SESSIONS` | off (delete on go) |
+| Archive sessions | `--archive-sessions` | `PI_REVIEW_ARCHIVE_SESSIONS` | off (delete on next fresh commit) |
 | Review guidelines | `--no-review-guidelines` | `PI_REVIEW_NO_REVIEW_GUIDELINES` | on (auto-discover `REVIEW_GUIDELINES.md`) |
 
 Examples:
@@ -174,11 +175,12 @@ export PI_REVIEW_ARCHIVE_SESSIONS=1
   prompt tells it the round number, lists the previous issues, and instructs it
   to be **proportionally lenient on previously raised issues that appear
   resolved** while holding the line on new problems.
-- **Approval (`go`)**: all review state is cleared. The approving comments
+- **Approval (`go`)**: the session is **kept** (lazy clear) so a subsequent
+  `git commit --amend` can resume it; the approving comments
   (summary/suggestions) are printed at commit time and persisted to
-  `.git/pi-reviewer/reviews/`. If `--archive-sessions` is on, the pi session is
-  archived to `.git/pi-reviewer/archive/session-<id>.jsonl.gz` (a gzipped
-  jsonl of the session entries) instead of deleted, so you can inspect or
+  `.git/pi-reviewer/reviews/`. If `--archive-sessions` is on, a snapshot of
+  the session is archived to `.git/pi-reviewer/archive/session-<id>.jsonl.gz`
+  (a gzipped jsonl of the session entries) at go time, so you can inspect or
   resurrect it later:
 
   ```bash
@@ -190,6 +192,30 @@ export PI_REVIEW_ARCHIVE_SESSIONS=1
     > .git/pi-reviewer/sessions/$(date -u +%Y-%m-%dT%H-%M-%S-%3NZ)_<id>.jsonl
   pi --session <id> --session-dir .git/pi-reviewer/sessions
   ```
+
+## Amending after a go
+
+When the reviewer approves (`go`) but gives feedback, you can address it in
+**the same commit** with `git commit --amend`. On Linux the hook detects the
+amend by walking the process hierarchy (`/proc`) for the `git --amend`
+invocation, then:
+
+- **Resumes the same session** — the reviewer remembers its previous feedback.
+- **Shows the full change set** the amended commit will contain (diff from the
+  parent of the approved commit to your staged tree), not just the delta, and
+  asks the reviewer to verify the feedback was addressed and re-evaluate the
+  whole change.
+- **Keeps the session after the go** (lazy clear) so further amends resume it
+  too; it is cleared on the next non-amend commit.
+
+Caveats:
+
+- **Non-Linux**: the `/proc` walk is Linux-only. On other platforms amends
+  fall through to the current behavior (fresh session, delta-only diff); use
+  `SKIP=pi-review` if you need to bypass.
+- **Rebase/cherry-pick**: during a rebase (detached HEAD) the amend behavior
+  is skipped, so `rebase -i edit` + `git commit --amend` gets a normal delta
+  review instead.
 
 ## Custom review criteria (REVIEW_GUIDELINES.md)
 
@@ -278,7 +304,7 @@ before relying on it:
 - **No session reset for v1.** If you abandon a change mid-review and start a
   different one, the old session context may carry over. The follow-up prompt
   explicitly tells pi this might be a new change; in practice, rely on
-  `go`-clears and `SKIP=pi-review` to reset.
+  `go`-keeps + fresh-clears and `SKIP=pi-review` to reset.
 - **Large diffs are not handled.** Very large staged changes may exceed the
   model's context window. Not truncated or summarized in v1.
 - **State lives under `.git/pi-reviewer/`** (not committed): `state.json`,
@@ -312,7 +338,7 @@ before relying on it:
 | Unrecognized decision value | Fail-closed | 1 |
 | Empty staged diff | Nothing to review | 0 |
 | Same tree as a prior rejection | Auto-reject, **no pi call** | 1 |
-| Decision `go` | Clear state (archive if enabled), proceed | 0 |
+| Decision `go` | Keep state (lazy clear, archive snapshot if enabled), proceed | 0 |
 | Decision `no-go` | Record rejection, print issues, block | 1 |
 | Post-commit note attach fails | Non-zero exit, review log kept for retry (commit already happened) | 1 |
 

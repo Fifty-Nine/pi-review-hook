@@ -38,8 +38,14 @@ git commit
   ├─ compute staged tree hash: `git write-tree`
   ├─ tree hash matches prior rejection? → yes: exit 1 (auto-reject, no pi call)
   ├─ load session state from .git/pi-reviewer/state.json
-  ├─ construct prompt (first round vs follow-up with leniency note,
-  │  current date injected so the model doesn't guess the date,
+  ├─ detect amend: process hierarchy (/proc walk, Linux) + detached-HEAD
+  │  guard → AMEND / NOT_AMEND / UNKNOWN (see amend_detect.py)
+  ├─ construct prompt:
+  │  • AMEND + approved_tree → amend follow-up: resume session, FULL
+  │    change set (base_tree → staged), verify feedback + re-evaluate
+  │  • round > 0 → no-go follow-up (delta + leniency, session resumed)
+  │  • else → fresh review (clear kept-after-go state, new session, delta)
+  │  (current date injected so the model doesn't guess the date,
   │  REVIEW_GUIDELINES.md appended if present)
   ├─ invoke: pi --mode json --session-id <id> --model <model> --session-dir <dir>
   │         -e <bundled extension.ts>
@@ -53,10 +59,13 @@ git commit
   │  toolName == "submit_review_decision"
   ├─ no tool call found? → exit 1 (fail-closed: non-compliance)
   ├─ pi process crashed/errored? → exit 1 (fail-closed: infra error)
-  ├─ decision == "go"? → log approving comments to .git/pi-reviewer/reviews/,
-  │                     print summary/suggestions, clear all state
-  │                     (archive session to .jsonl.gz if enabled), exit 0
-  └─ decision == "no-go"? → record rejected tree hash + issues, print issues, exit 1
+  ├─ decision == "go"? → archive session snapshot (if enabled), log
+  │                     approving comments to .git/pi-reviewer/reviews/,
+  │                     record_go_state (keep session_id + approved_tree
+  │                     + base_tree for a potential amend), print
+  │                     summary/suggestions, exit 0
+  └─ decision == "no-go"? → record rejected tree hash + issues (keeps
+                           approved_tree/base_tree), print issues, exit 1
 
 (commit created)
   │
@@ -79,7 +88,9 @@ git commit
 │       {"tree_hash": "a1b2c3...", "issues": [...]},
 │       {"tree_hash": "d4e5f6...", "issues": [...]}
 │     ],
-│     "round": 2
+│     "round": 2,
+│     "approved_tree": "a1b2c3...",   # last go's tree (kept for amend)
+│     "base_tree": "d4e5f6..."        # parent of the approved commit
 │   }
 ├── sessions/               # pi session store (managed by pi itself)
 │   └── <timestamp>_<session-id>.jsonl   # one jsonl file per session
@@ -89,13 +100,22 @@ git commit
     └── session-<id>.jsonl.gz
 ```
 
-- **Session accumulates** across rounds until a "go" decision clears it.
-  No implicit keying by HEAD, branch, or file set.
+- **Session accumulates** across rounds. After a **go** the session is
+  **kept** (lazy clear) with `approved_tree` + `base_tree` recorded, so a
+  subsequent `git commit --amend` can resume it and re-review the full
+  change set. It is cleared on the next non-amend commit (round 0). No
+  implicit keying by HEAD, branch, or file set.
+- **Amend detection**: on Linux the hook walks /proc ancestors for the
+  nearest `git` process and checks its argv for `--amend` (AMEND /
+  NOT_AMEND / UNKNOWN). A detached HEAD (rebase/cherry-pick) skips the
+  amend behavior. Non-Linux amends fall through to the current behavior.
 - **Same-tree auto-reject**: if `git write-tree` hash matches a prior rejection,
   block without invoking pi. User must amend or `SKIP=pi-review`.
-- **No reset mechanism for v1.** Rely on go-clears + `SKIP=pi-review`.
-- **Go → clear all state** (rm state.json + sessions/ dir; archive first if
-  `--archive-sessions`).
+- **No reset mechanism for v1.** Rely on go-keeps + fresh-clears +
+  `SKIP=pi-review`.
+- **Go → keep state** (record_go_state: session_id + approved_tree +
+  base_tree; archive a session snapshot first if `--archive-sessions`).
+  Cleared on the next non-amend commit (round 0).
 - **Post-commit notes**: the `pi-review-notes` hook attaches a review note (or
   a "no review" audit note) to every commit under `refs/notes/pi-review` and
   deletes the consumed review log. See `notes.py`.
@@ -146,6 +166,7 @@ src/pi_review_precommit/
 ├── state.py             # .git/pi-reviewer/ state management
 ├── pi_runner.py         # pi invocation + NDJSON parsing
 ├── prompts.py           # System prompt + per-round prompt construction
+├── amend_detect.py      # Amend detection (/proc walk + detached-HEAD guard)
 └── extension.ts         # Bundled pi extension (submit_review_decision tool)
 ```
 
@@ -271,10 +292,14 @@ pre-commit try-repo ~/pi-review-hook pi-review --verbose -- --model glm-5.2
 - pi crashes / network error → exit 1 (fail-closed)
 - pi runs but no `submit_review_decision` tool call → exit 1 (fail-closed)
 - Same tree hash as previous rejection → exit 1, no pi call (auto-reject)
-- Go decision → state cleared, exit 0
+- Go decision → state kept (lazy clear: session_id + approved_tree +
+  base_tree), exit 0
 - No-go decision → state recorded, issues printed, exit 1
 - Unrecognized decision value → exit 1 (fail-closed)
 - Multiple rounds: session resumes, leniency prompt includes previous issues
+- Amend after go → session resumed, full change set (base → staged) prompt
+- New commit on top (NOT_AMEND) → kept state cleared, fresh session
+- Detached HEAD (rebase/cherry-pick) → amend behavior skipped
 
 ## NixOS / uv gotchas
 
@@ -313,8 +338,19 @@ present in `dist/*.whl`.
       see note above)
 - [x] `hook.py` — main entry point, full flow (empty-diff check runs before
       same-tree rejection so a stale rejection can't block an empty index)
+- [x] `amend_detect.py` — amend detection: /proc ancestor walk (Linux,
+      stdlib-only) + detached-HEAD guard, returning AMEND/NOT_AMEND/UNKNOWN
+- [x] Amend-after-go: on a detected amend the session is resumed and the
+      reviewer sees the FULL change set (base_tree → staged) with
+      round-dependent framing (verify suggestions after go; verify issues +
+      leniency after a no-go-on-amend)
+- [x] Lazy-clear state lifecycle: go keeps session_id + approved_tree +
+      base_tree (record_go_state); cleared on the next non-amend commit;
+      no-go on an amend preserves approved/base trees; fresh-path clear
+      archives the kept session when --archive-sessions is on
 - [x] `.pre-commit-hooks.yaml` — created (pi-review + pi-review-notes)
-- [x] Unit tests (89 passing: config, state, pi_runner, hook, notes)
+- [x] Unit tests (119 passing: config, state, pi_runner, hook, notes,
+      amend_detect, prompts)
 - [x] Wheel build verified — `extension.ts` bundled via hatchling
 - [x] Extension integration verified under real pi (tool call + NDJSON)
 - [x] Go-decision review log: comments persisted to `.git/pi-reviewer/reviews/`
@@ -349,9 +385,16 @@ present in `dist/*.whl`.
   completely different one, the session context may be polluted. The
   follow-up prompt tells pi "this may be new or continuation." Reset
   strategy to be guided by implementation experience.
-- Amend-after-go: the review log is consumed by the original commit, so an
-  amended commit (same tree) gets a "no review" audit note. Accepted
-  consequence of the cleanup decision.
+- Amend-after-go (pre-commit side): implemented — amend detection,
+  session resume with the full change set, lazy-clear state lifecycle.
+  Post-commit note carry-forward for amended commits is the next slice
+  (reflog detection in notes.py).
+- Non-Linux amend detection: the /proc walk is Linux-only; on other
+  platforms amends fall through to the current behavior (fresh session,
+  delta-only diff). Documented in README.
+- Session growth across many amends: each amend appends a full-change-set
+  turn; the session accumulates until the next non-amend commit. Accepted;
+  could exceed context for large changes / many amends.
 - The `refs/notes/pi-review` notes ref is not pushed by default; sharing
   notes requires `git push origin refs/notes/pi-review`.
 

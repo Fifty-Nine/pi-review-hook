@@ -57,14 +57,19 @@ def test_first_round_go_passes(mock_git, mock_pi_available, monkeypatch):
     assert "review round" not in captured["user_prompt"]
 
 
-def test_go_clears_state(mock_git, mock_pi_available, monkeypatch):
+def test_go_keeps_state_for_amend(mock_git, mock_pi_available, monkeypatch):
     from pi_review_precommit.state import load_state, record_rejection
 
     _capture_run_review(monkeypatch, {"decision": "go"})
     record_rejection("pi-review-old", "oldtree", None)
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
 
-    assert hook.main([]) == 0  # go clears state
-    assert load_state() is None
+    assert hook.main([]) == 0  # go keeps state (lazy clear)
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == TREE
+    assert state["base_tree"] == "head123"
+    assert state["round"] == 0
 
 
 def test_go_prints_summary_and_suggestions_and_logs(
@@ -174,10 +179,12 @@ def test_followup_round_resumes_session_with_previous_issues(
     assert "review round 2" in prompt
     assert "old bug" in prompt
     assert "proportionally lenient" in prompt
-    # Follow-up clears state on go
+    # Follow-up go keeps state (lazy clear) for a potential amend
     from pi_review_precommit.state import load_state
 
-    assert load_state() is None
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == TREE
 
 
 # --- Failure modes ---------------------------------------------------------
@@ -274,6 +281,7 @@ def test_go_with_archive_flag_keeps_jsonl_archive(
 
     _capture_run_review(monkeypatch, {"decision": "go"})
     record_rejection("pi-review-old", "oldtree", None)
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
     # Simulate the pi session file (real layout: <ts>_<session-id>.jsonl)
     sdir = Path(".git") / "pi-reviewer" / "sessions"
     sdir.mkdir(parents=True)
@@ -282,7 +290,10 @@ def test_go_with_archive_flag_keeps_jsonl_archive(
     )
 
     assert hook.main(["--archive-sessions"]) == 0
-    assert load_state() is None
+    # state kept (lazy clear) for a potential amend
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == TREE
     archives = list(
         (Path(".git") / "pi-reviewer" / "archive").glob(
             "session-pi-review-old.jsonl.gz"
@@ -296,7 +307,7 @@ def test_go_with_archive_flag_keeps_jsonl_archive(
     assert payload["archive_path"] == str(archives[0])
 
 
-def test_go_without_archive_flag_deletes_session(
+def test_go_without_archive_flag_keeps_session(
     mock_git, mock_pi_available, monkeypatch
 ):
     from pathlib import Path
@@ -305,12 +316,14 @@ def test_go_without_archive_flag_deletes_session(
 
     _capture_run_review(monkeypatch, {"decision": "go"})
     record_rejection("pi-review-old", "oldtree", None)
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
     sdir = Path(".git") / "pi-reviewer" / "sessions"
     sdir.mkdir(parents=True)
     (sdir / "2026-08-15T00-00-00-000Z_pi-review-old.jsonl").write_text("{}")
 
     assert hook.main([]) == 0
-    assert not sdir.exists()
+    # session dir kept (lazy clear) for a potential amend
+    assert sdir.exists()
     assert not (Path(".git") / "pi-reviewer" / "archive").exists()
     # review log has no archive path when archiving is off
     logs = list(REVIEWS_DIR.glob("*.json"))
@@ -338,3 +351,252 @@ def test_guidelines_skipped_with_flag(
 
     assert hook.main(["--no-review-guidelines"]) == 0
     assert "No-go if secrets are committed." not in captured["user_prompt"]
+
+
+# --- Amend flow ------------------------------------------------------------
+
+
+def test_amend_after_go_resumes_session_with_full_change_set(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import load_state, record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    monkeypatch.setattr(hook, "detect_amend", lambda: "AMEND")
+    monkeypatch.setattr(hook, "get_parent_tree", lambda: "parent123")
+    captured_full_diff: dict = {}
+
+    def fake_full_diff(base, staged):
+        captured_full_diff["base"] = base
+        captured_full_diff["staged"] = staged
+        return "FULL DIFF"
+
+    monkeypatch.setattr(hook, "get_full_change_set_diff", fake_full_diff)
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    assert captured["session_id"] == "pi-review-abc"  # session resumed
+    assert captured_full_diff == {"base": "base456", "staged": TREE}
+    prompt = captured["user_prompt"]
+    assert "git commit --amend" in prompt
+    assert "FULL DIFF" in prompt
+    assert "previously approved" in prompt
+    # go on amend keeps state (lazy clear) with the new approved tree
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == TREE
+    assert state["base_tree"] == "parent123"
+    assert state["round"] == 0
+
+
+def test_amend_after_go_nogo_keeps_approved_and_base(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import load_state, record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    monkeypatch.setattr(hook, "detect_amend", lambda: "AMEND")
+    monkeypatch.setattr(hook, "get_full_change_set_diff", lambda b, s: "FULL DIFF")
+    _capture_run_review(
+        monkeypatch,
+        {"decision": "no-go", "issues": [{"severity": "major", "description": "x"}]},
+    )
+
+    assert hook.main([]) == 1
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == "approved123"  # unchanged
+    assert state["base_tree"] == "base456"  # unchanged
+    assert state["round"] == 1
+
+
+def test_amend_after_nogo_resumes_with_leniency(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import record_go_state, record_rejection
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    record_rejection(
+        "pi-review-abc",
+        "rejected1",
+        [{"severity": "major", "description": "old bug"}],
+    )
+    monkeypatch.setattr(hook, "detect_amend", lambda: "AMEND")
+    monkeypatch.setattr(hook, "get_parent_tree", lambda: "parent123")
+    monkeypatch.setattr(hook, "get_full_change_set_diff", lambda b, s: "FULL DIFF")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    assert captured["session_id"] == "pi-review-abc"
+    prompt = captured["user_prompt"]
+    assert "previously rejected" in prompt
+    assert "proportionally lenient" in prompt
+    assert "FULL DIFF" in prompt
+
+
+def test_new_commit_on_top_clears_kept_state_and_starts_fresh(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import load_state, record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    monkeypatch.setattr(hook, "detect_amend", lambda: "NOT_AMEND")
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    # fresh session, not resumed
+    assert captured["session_id"] != "pi-review-abc"
+    assert "Staged files" in captured["user_prompt"]  # first-round prompt
+    assert "git commit --amend" not in captured["user_prompt"]
+    # go records the new approved state
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == TREE
+    assert state["base_tree"] == "head123"
+
+
+def test_unknown_amend_falls_back_to_fresh(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    monkeypatch.setattr(hook, "detect_amend", lambda: "UNKNOWN")
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    assert captured["session_id"] != "pi-review-abc"
+    assert "Staged files" in captured["user_prompt"]
+    assert "git commit --amend" not in captured["user_prompt"]
+
+
+def test_detached_head_skips_amend_behavior(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    # detect_amend returns NOT_AMEND for detached HEAD
+    monkeypatch.setattr(hook, "detect_amend", lambda: "NOT_AMEND")
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    assert captured["session_id"] != "pi-review-abc"
+    assert "git commit --amend" not in captured["user_prompt"]
+
+
+def test_amend_without_approved_tree_falls_back_to_fresh(
+    mock_git, mock_pi_available, monkeypatch
+):
+    monkeypatch.setattr(hook, "detect_amend", lambda: "AMEND")
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
+    captured = _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    assert "Staged files" in captured["user_prompt"]
+    assert "git commit --amend" not in captured["user_prompt"]
+
+
+def test_amend_uses_empty_tree_base_when_base_missing(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pi_review_precommit.state import save_state
+
+    # Old-style state: approved_tree set but no base_tree
+    save_state(
+        {
+            "session_id": "pi-review-abc",
+            "rejected_trees": [],
+            "round": 0,
+            "approved_tree": "approved123",
+        }
+    )
+    monkeypatch.setattr(hook, "detect_amend", lambda: "AMEND")
+    monkeypatch.setattr(hook, "get_parent_tree", lambda: "parent123")
+    captured_full_diff: dict = {}
+
+    def fake_full_diff(base, staged):
+        captured_full_diff["base"] = base
+        captured_full_diff["staged"] = staged
+        return "FULL DIFF"
+
+    monkeypatch.setattr(hook, "get_full_change_set_diff", fake_full_diff)
+    _capture_run_review(monkeypatch, {"decision": "go"})
+
+    assert hook.main([]) == 0
+    from pi_review_precommit.prompts import EMPTY_TREE_HASH
+
+    assert captured_full_diff["base"] == EMPTY_TREE_HASH
+    assert captured_full_diff["staged"] == TREE
+
+
+def test_fresh_path_after_go_archives_kept_session(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pathlib import Path
+
+    from pi_review_precommit.state import load_state, record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    monkeypatch.setattr(hook, "detect_amend", lambda: "NOT_AMEND")
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
+    sdir = Path(".git") / "pi-reviewer" / "sessions"
+    sdir.mkdir(parents=True)
+    (sdir / "2026-08-15T00-00-00-000Z_pi-review-abc.jsonl").write_text("{}")
+
+    captured: dict = {}
+
+    def fake_run_review(**kwargs):
+        captured.update(kwargs)
+        # pi would create the session file; simulate it for the new session
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / f"2026-08-15T00-00-00-000Z_{kwargs['session_id']}.jsonl").write_text(
+            "{}"
+        )
+        return {"decision": "go"}
+
+    monkeypatch.setattr(hook, "run_review", fake_run_review)
+
+    assert hook.main(["--archive-sessions"]) == 0
+    # kept session archived on the fresh-path clear
+    archives = list(
+        (Path(".git") / "pi-reviewer" / "archive").glob(
+            "session-pi-review-abc.jsonl.gz"
+        )
+    )
+    assert len(archives) == 1
+    # old session file cleared; session dir kept (lazy clear) for the new go
+    assert sdir.exists()
+    assert not list(sdir.glob("*pi-review-abc*.jsonl"))
+    state = load_state()
+    assert state is not None
+    assert state["approved_tree"] == TREE
+
+
+def test_fresh_path_clear_tolerates_missing_session_file(
+    mock_git, mock_pi_available, monkeypatch
+):
+    from pathlib import Path
+
+    from pi_review_precommit.state import record_go_state
+
+    record_go_state("pi-review-abc", "approved123", "base456")
+    monkeypatch.setattr(hook, "detect_amend", lambda: "NOT_AMEND")
+    monkeypatch.setattr(hook, "get_head_tree", lambda: "head123")
+    # no session file under sessions/ (stale state) — must not crash
+    sdir = Path(".git") / "pi-reviewer" / "sessions"
+    sdir.mkdir(parents=True)
+
+    def fake_run_review(**kwargs):
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / f"2026-08-15T00-00-00-000Z_{kwargs['session_id']}.jsonl").write_text(
+            "{}"
+        )
+        return {"decision": "go"}
+
+    monkeypatch.setattr(hook, "run_review", fake_run_review)
+
+    assert hook.main(["--archive-sessions"]) == 0

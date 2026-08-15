@@ -55,12 +55,18 @@ def clear_state(
     If ``archive`` is set, the session is archived to
     ``<session-dir-parent>/archive/session-<id>.jsonl.gz`` first (opt-in, so
     prior sessions can be resurrected for interrogation) instead of being
-    deleted outright.
+    deleted outright. A missing session file (stale state) is tolerated —
+    there is nothing to archive, so the directory is cleared anyway.
     """
     sdir = sessions_path(session_dir)
     if sdir.exists():
         if archive:
-            archive_sessions(session_dir, session_id)
+            try:
+                archive_sessions(session_dir, session_id)
+            except FileNotFoundError:
+                # Nothing to archive (e.g. stale state with no session
+                # file); clear the directory anyway.
+                pass
         shutil.rmtree(sdir)
 
     # Unlink the state file last: if archiving (or anything above) fails,
@@ -100,7 +106,11 @@ def archive_sessions(
 
 
 def record_rejection(session_id: str, tree_hash: str, issues: list | None) -> None:
-    """Record a rejected tree hash and optional issues in state."""
+    """Record a rejected tree hash and optional issues in state.
+
+    Preserves ``approved_tree`` / ``base_tree`` (a no-go on an amend keeps
+    the last go's base so the next amend can resume against it).
+    """
     state = load_state() or {
         "session_id": session_id,
         "rejected_trees": [],
@@ -110,6 +120,42 @@ def record_rejection(session_id: str, tree_hash: str, issues: list | None) -> No
     rejected.append({"tree_hash": tree_hash, "issues": issues})
     state["round"] = state.get("round", 0) + 1
     save_state(state)
+
+
+def record_go_state(session_id: str, approved_tree: str, base_tree: str) -> None:
+    """Record the go state: keep the session for a potential amend.
+
+    After a go the session is NOT cleared (lazy clear): the session id,
+    the approved tree, and the base tree (the parent of the approved
+    commit) are kept so a subsequent ``git commit --amend`` can resume the
+    session and re-review the full change set. Cleared on the next
+    non-amend commit (round 0) via ``clear_state``.
+    """
+    save_state(
+        {
+            "session_id": session_id,
+            "rejected_trees": [],
+            "round": 0,
+            "approved_tree": approved_tree,
+            "base_tree": base_tree,
+        }
+    )
+
+
+def get_approved_tree() -> str | None:
+    """The tree hash of the last approved (go) commit, or None."""
+    state = load_state()
+    if not state:
+        return None
+    return state.get("approved_tree")
+
+
+def get_base_tree() -> str | None:
+    """The base tree (parent of the approved commit) for amend diffs."""
+    state = load_state()
+    if not state:
+        return None
+    return state.get("base_tree")
 
 
 def is_tree_rejected(tree_hash: str) -> bool:
@@ -145,10 +191,11 @@ def record_approval(
     decision_args: dict,
     archive_path: str | None = None,
 ) -> Path:
-    """Persist the final (go) review round before the state clear.
+    """Persist the final (go) review round as a review log.
 
     The approving comments (summary, suggestions, issues) would otherwise
-    be lost when ``clear_state`` removes the session; this keeps them for
+    be lost when the session is eventually cleared (lazy clear — the
+    session is kept after a go for a potential amend); this keeps them for
     later reference under ``.git/pi-reviewer/reviews/``. ``archive_path``
     (when archiving is enabled) lets the post-commit hook link the session
     archive from the git note.
