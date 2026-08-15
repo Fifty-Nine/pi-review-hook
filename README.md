@@ -97,11 +97,18 @@ repos:
       - id: pi-review-notes   # optional: git notes for finished reviews
 ```
 
-Then `pre-commit install` as usual. Both hooks are `always_run: true`,
-`pass_filenames: false`, and `require_serial: true` (they compute their own
-diff / commit lookup and are stateful), so they run on every commit
-regardless of staged file types. `pi-review-notes` runs at the **post-commit**
-stage and takes no arguments.
+Then install the hooks. `pi-review-notes` runs at the post-commit stage, so
+install that hook type too:
+
+```bash
+pre-commit install
+pre-commit install --hook-type post-commit   # required for pi-review-notes
+```
+
+Both hooks are `always_run: true`, `pass_filenames: false`, and
+`require_serial: true` (they compute their own diff / commit lookup and are
+stateful), so they run on every commit regardless of staged file types.
+`pi-review-notes` takes no arguments.
 
 **NixOS note:** the build backend is `hatchling` (pure Python) specifically
 because `uv_build`'s compiled binary can't run on NixOS inside pre-commit's pip
