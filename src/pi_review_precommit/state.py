@@ -11,9 +11,9 @@ auto-reject).
 
 from __future__ import annotations
 
+import gzip
 import json
 import shutil
-import tarfile
 from datetime import datetime
 from pathlib import Path
 
@@ -52,9 +52,10 @@ def clear_state(
 ) -> None:
     """Clear all state: hook state file + pi session directory.
 
-    If ``archive`` is set, the session directory is compressed to
-    ``<session-dir-parent>/archives/`` first (opt-in, so prior sessions can
-    be resurrected for interrogation) instead of being deleted outright.
+    If ``archive`` is set, the session is archived to
+    ``<session-dir-parent>/archive/session-<id>.jsonl.gz`` first (opt-in, so
+    prior sessions can be resurrected for interrogation) instead of being
+    deleted outright.
     """
     sdir = sessions_path(session_dir)
     if sdir.exists():
@@ -73,20 +74,28 @@ def archive_sessions(
     session_dir: str = ".git/pi-reviewer/sessions",
     session_id: str | None = None,
 ) -> Path:
-    """Compress the session directory into ``<parent>/archives/``.
+    """Archive the pi session as a gzipped jsonl file.
 
-    Returns the tarball path. The archive keeps the full pi conversation
-    history so a prior review session can be resurrected later, e.g.
-    ``pi --session <id> --session-dir <extracted-dir>``.
+    The pi session store keeps one jsonl file per session directly in the
+    session dir, named ``<timestamp>_<session-id>.jsonl``. The archive is a
+    gzip of that file: ``<parent>/archive/session-<id>.jsonl.gz``.
+
+    Returns the archive path. Raises FileNotFoundError if no session file
+    matches ``session_id``.
     """
+    if session_id is None:
+        raise ValueError("session_id is required to archive a session")
     sdir = sessions_path(session_dir)
-    archives_dir = sdir.parent / "archives"
-    archives_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%dT%H%M%S%f")  # %f: sub-second precision
-    stem = session_id or "sessions"
-    path = archives_dir / f"{stem}-{ts}.tar.gz"
-    with tarfile.open(path, "w:gz") as tar:
-        tar.add(sdir, arcname=sdir.name)
+    matches = sorted(sdir.glob(f"*{session_id}*.jsonl"))
+    if not matches:
+        raise FileNotFoundError(
+            f"no session file for '{session_id}' under {sdir}"
+        )
+    archive_dir = sdir.parent / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    path = archive_dir / f"session-{session_id}.jsonl.gz"
+    with matches[0].open("rb") as fin, gzip.open(path, "wb") as fout:
+        shutil.copyfileobj(fin, fout)
     return path
 
 
@@ -134,12 +143,15 @@ def record_approval(
     tree_hash: str,
     round_number: int,
     decision_args: dict,
+    archive_path: str | None = None,
 ) -> Path:
     """Persist the final (go) review round before the state clear.
 
     The approving comments (summary, suggestions, issues) would otherwise
     be lost when ``clear_state`` removes the session; this keeps them for
-    later reference under ``.git/pi-reviewer/reviews/``.
+    later reference under ``.git/pi-reviewer/reviews/``. ``archive_path``
+    (when archiving is enabled) lets the post-commit hook link the session
+    archive from the git note.
     """
     now = datetime.now()
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,6 +165,7 @@ def record_approval(
         "summary": decision_args.get("summary"),
         "suggestions": decision_args.get("suggestions"),
         "issues": decision_args.get("issues"),
+        "archive_path": str(archive_path) if archive_path else None,
     }
     path.write_text(json.dumps(payload, indent=2))
     return path

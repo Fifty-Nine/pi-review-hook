@@ -34,6 +34,7 @@ from pi_review_precommit.prompts import (
     get_system_prompt,
 )
 from pi_review_precommit.state import (
+    archive_sessions,
     clear_state,
     get_round_number,
     get_session_id,
@@ -143,14 +144,21 @@ def main(argv: list[str] | None = None) -> int:
     if decision == "go":
         summary = decision_args.get("summary")
         suggestions = decision_args.get("suggestions")
+        # Archive the session first (fail-closed on error) so the archive
+        # path can be recorded in the review log for the post-commit hook.
+        archive_path = None
+        if config.archive_sessions:
+            archive_path = archive_sessions(config.session_dir, session_id)
         # Persist the approving comments before the state clear removes
         # the session, and surface them at commit time.
-        record_approval(session_id, tree_hash, round_number, decision_args)
-        clear_state(
-            config.session_dir,
-            archive=config.archive_sessions,
-            session_id=session_id,
+        record_approval(
+            session_id,
+            tree_hash,
+            round_number,
+            decision_args,
+            archive_path=archive_path,
         )
+        clear_state(config.session_dir, session_id=session_id)
         print("pi-review: Changes approved.", file=sys.stderr)
         if summary:
             print(f"  Summary: {summary}", file=sys.stderr)

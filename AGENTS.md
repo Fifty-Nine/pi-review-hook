@@ -55,7 +55,7 @@ git commit
   ├─ pi process crashed/errored? → exit 1 (fail-closed: infra error)
   ├─ decision == "go"? → log approving comments to .git/pi-reviewer/reviews/,
   │                     print summary/suggestions, clear all state
-  │                     (archive session to .tar.gz if enabled), exit 0
+  │                     (archive session to .jsonl.gz if enabled), exit 0
   └─ decision == "no-go"? → record rejected tree hash + issues, print issues, exit 1
 ```
 
@@ -302,7 +302,8 @@ present in `dist/*.whl`.
       the review prompt, overrides default criteria (opt-out via
       `--no-review-guidelines`); this repo dogfoods its own REVIEW_GUIDELINES.md
 - [x] Opt-in session archiving: `--archive-sessions` / `PI_REVIEW_ARCHIVE_SESSIONS`
-      tars the session to `.git/pi-reviewer/archives/` instead of deleting on go
+      gzips the session to `.git/pi-reviewer/archive/session-<id>.jsonl.gz`
+      instead of deleting on go
 - [ ] End-to-end manual testing via `pre-commit try-repo`
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)

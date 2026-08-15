@@ -126,7 +126,7 @@ hooks:
     args:
       - "--model"
       - "ollama-cloud/glm-5.2"
-      - "--archive-sessions"     # keep a tar.gz of each reviewed session
+      - "--archive-sessions"     # keep a gzipped jsonl of each reviewed session
 ```
 
 ```bash
@@ -167,12 +167,18 @@ export PI_REVIEW_ARCHIVE_SESSIONS=1
 - **Approval (`go`)**: all review state is cleared. The approving comments
   (summary/suggestions) are printed at commit time and persisted to
   `.git/pi-reviewer/reviews/`. If `--archive-sessions` is on, the pi session is
-  compressed to `.git/pi-reviewer/archives/` instead of deleted, so you can
-  resurrect it later for interrogation:
+  archived to `.git/pi-reviewer/archive/session-<id>.jsonl.gz` (a gzipped
+  jsonl of the session entries) instead of deleted, so you can inspect or
+  resurrect it later:
 
   ```bash
-  tar -xzf .git/pi-reviewer/archives/<id>-<ts>.tar.gz -C /tmp
-  pi --session <session-id> --session-dir /tmp/sessions
+  # inspect the archive
+  zgrep '"type":"message"' .git/pi-reviewer/archive/session-<id>.jsonl.gz
+
+  # resurrect: put the jsonl back in the session store, then resume
+  gunzip -c .git/pi-reviewer/archive/session-<id>.jsonl.gz \
+    > .git/pi-reviewer/sessions/$(date -u +%Y-%m-%dT%H-%M-%S-%3NZ)_<id>.jsonl
+  pi --session <id> --session-dir .git/pi-reviewer/sessions
   ```
 
 ## Custom review criteria (REVIEW_GUIDELINES.md)
@@ -233,7 +239,7 @@ before relying on it:
 - **Large diffs are not handled.** Very large staged changes may exceed the
   model's context window. Not truncated or summarized in v1.
 - **State lives under `.git/pi-reviewer/`** (not committed): `state.json`,
-  `sessions/`, `reviews/`, and `archives/`. It is per-repo and per-working-copy.
+  `sessions/`, `reviews/`, and `archive/`. It is per-repo and per-working-copy.
 - **pre-commit hides passed-hook output.** On a successful review the printed
   summary/suggestions aren't shown unless you run with `--verbose`. The
   authoritative record is the JSON in `.git/pi-reviewer/reviews/`.

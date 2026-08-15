@@ -64,7 +64,7 @@ def test_clear_state_removes_state_and_sessions(tmp_path) -> None:
     assert not state.load_state()
     assert not sessions.exists()
     # default: no archive is produced
-    assert not (tmp_path / ".git" / "pi-reviewer" / "archives").exists()
+    assert not (tmp_path / ".git" / "pi-reviewer" / "archive").exists()
 
 
 def test_clear_state_custom_session_dir(tmp_path) -> None:
@@ -107,37 +107,68 @@ def test_record_approval_defaults_on_bare_go() -> None:
     assert payload["issues"] is None
 
 
-def test_clear_state_archive_creates_tarball(tmp_path) -> None:
-    import tarfile
+def test_record_approval_records_archive_path() -> None:
+    result = state.record_approval(
+        "s1",
+        "tree123",
+        2,
+        {"decision": "go"},
+        archive_path=".git/pi-reviewer/archive/session-s1.jsonl.gz",
+    )
+    payload = json.loads(result.read_text())
+    assert payload["archive_path"] == ".git/pi-reviewer/archive/session-s1.jsonl.gz"
+
+
+def test_record_approval_archive_path_none_by_default() -> None:
+    result = state.record_approval("s1", "tree1", 0, {"decision": "go"})
+    payload = json.loads(result.read_text())
+    assert payload["archive_path"] is None
+
+
+def test_clear_state_archive_creates_jsonl_gz(tmp_path) -> None:
+    import gzip
 
     state.record_rejection("s1", "tree1", None)
-    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions" / "s1"
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions"
     sessions.mkdir(parents=True)
-    (sessions / "session.json").write_text('{"id": "s1"}')
+    (sessions / "2026-08-15T00-00-00-000Z_s1.jsonl").write_text(
+        '{"type": "session", "id": "s1"}\n'
+        '{"type": "message", "id": "m1"}\n'
+    )
 
     state.clear_state(session_id="s1", archive=True)
 
     # state file + session dir gone
     assert not state.state_path().exists()
     assert not sessions.exists()
-    # tarball exists and contains the session files
-    archives = tmp_path / ".git" / "pi-reviewer" / "archives"
-    tarballs = list(archives.glob("s1-*.tar.gz"))
-    assert len(tarballs) == 1
-    with tarfile.open(tarballs[0], "r:gz") as tar:
-        names = tar.getnames()
-    assert any(n.endswith("s1/session.json") for n in names)
+    # jsonl.gz archive exists and contains the session entries in order
+    archive_dir = tmp_path / ".git" / "pi-reviewer" / "archive"
+    archives = list(archive_dir.glob("session-s1.jsonl.gz"))
+    assert len(archives) == 1
+    with gzip.open(archives[0], "rt") as f:
+        lines = f.read().splitlines()
+    assert lines == [
+        '{"type": "session", "id": "s1"}',
+        '{"type": "message", "id": "m1"}',
+    ]
 
 
 def test_archive_sessions_returns_path(tmp_path) -> None:
-    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions" / "s1"
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions"
     sessions.mkdir(parents=True)
-    (sessions / "session.json").write_text("{}")
+    (sessions / "2026-08-15T00-00-00-000Z_s1.jsonl").write_text("{}")
 
     path = state.archive_sessions(session_id="s1")
     assert path.exists()
-    assert path.name.startswith("s1-")
-    assert path.suffix == ".gz"
+    assert path.name == "session-s1.jsonl.gz"
+    assert path.parent.name == "archive"
+
+
+def test_archive_sessions_missing_session_raises(tmp_path) -> None:
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions"
+    sessions.mkdir(parents=True)
+    with pytest.raises(FileNotFoundError):
+        state.archive_sessions(session_id="nope")
 
 
 def test_clear_state_archive_failure_keeps_state_file(
@@ -145,14 +176,14 @@ def test_clear_state_archive_failure_keeps_state_file(
 ) -> None:
     """If archiving fails, the hook fails closed but state.json survives."""
     state.record_rejection("s1", "tree1", None)
-    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions" / "s1"
+    sessions = tmp_path / ".git" / "pi-reviewer" / "sessions"
     sessions.mkdir(parents=True)
-    (sessions / "session.json").write_text("{}")
+    (sessions / "2026-08-15T00-00-00-000Z_s1.jsonl").write_text("{}")
 
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(state.tarfile, "open", boom)
+    monkeypatch.setattr(state.gzip, "open", boom)
     with pytest.raises(OSError):
         state.clear_state(session_id="s1", archive=True)
 

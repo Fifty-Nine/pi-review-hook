@@ -92,6 +92,7 @@ def test_go_prints_summary_and_suggestions_and_logs(
     payload = json.loads(logs[0].read_text())
     assert payload["summary"] == "LGTM with minor notes"
     assert payload["suggestions"] == ["add a test", "rename x"]
+    assert payload["archive_path"] is None
 
 
 # --- First round: no-go ----------------------------------------------------
@@ -264,23 +265,35 @@ def test_git_failure_fails_closed(mock_pi_available, monkeypatch, capsys):
     assert "not a git repo" in capsys.readouterr().err
 
 
-def test_go_with_archive_flag_keeps_tarball(mock_git, mock_pi_available, monkeypatch):
+def test_go_with_archive_flag_keeps_jsonl_archive(
+    mock_git, mock_pi_available, monkeypatch
+):
     from pathlib import Path
 
-    from pi_review_precommit.state import load_state, record_rejection
+    from pi_review_precommit.state import REVIEWS_DIR, load_state, record_rejection
 
     _capture_run_review(monkeypatch, {"decision": "go"})
     record_rejection("pi-review-old", "oldtree", None)
-    # Simulate the pi session dir that will be archived
+    # Simulate the pi session file (real layout: <ts>_<session-id>.jsonl)
     sdir = Path(".git") / "pi-reviewer" / "sessions"
-    (sdir / "pi-review-old").mkdir(parents=True)
-    (sdir / "pi-review-old" / "session.json").write_text("{}")
+    sdir.mkdir(parents=True)
+    (sdir / "2026-08-15T00-00-00-000Z_pi-review-old.jsonl").write_text(
+        '{"type": "session", "id": "pi-review-old"}\n'
+    )
 
     assert hook.main(["--archive-sessions"]) == 0
     assert load_state() is None
-    tarballs = list((Path(".git") / "pi-reviewer" / "archives").glob("*.tar.gz"))
-    assert len(tarballs) == 1
-    assert tarballs[0].name.startswith("pi-review-old-")
+    archives = list(
+        (Path(".git") / "pi-reviewer" / "archive").glob(
+            "session-pi-review-old.jsonl.gz"
+        )
+    )
+    assert len(archives) == 1
+    # review log records the archive path for the post-commit hook
+    logs = list(REVIEWS_DIR.glob("*.json"))
+    assert len(logs) == 1
+    payload = json.loads(logs[0].read_text())
+    assert payload["archive_path"] == str(archives[0])
 
 
 def test_go_without_archive_flag_deletes_session(
@@ -288,17 +301,22 @@ def test_go_without_archive_flag_deletes_session(
 ):
     from pathlib import Path
 
-    from pi_review_precommit.state import record_rejection
+    from pi_review_precommit.state import REVIEWS_DIR, record_rejection
 
     _capture_run_review(monkeypatch, {"decision": "go"})
     record_rejection("pi-review-old", "oldtree", None)
     sdir = Path(".git") / "pi-reviewer" / "sessions"
-    (sdir / "pi-review-old").mkdir(parents=True)
-    (sdir / "pi-review-old" / "session.json").write_text("{}")
+    sdir.mkdir(parents=True)
+    (sdir / "2026-08-15T00-00-00-000Z_pi-review-old.jsonl").write_text("{}")
 
     assert hook.main([]) == 0
     assert not sdir.exists()
-    assert not (Path(".git") / "pi-reviewer" / "archives").exists()
+    assert not (Path(".git") / "pi-reviewer" / "archive").exists()
+    # review log has no archive path when archiving is off
+    logs = list(REVIEWS_DIR.glob("*.json"))
+    assert len(logs) == 1
+    payload = json.loads(logs[0].read_text())
+    assert payload["archive_path"] is None
 
 
 def test_guidelines_included_in_prompt_when_file_present(
