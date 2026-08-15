@@ -40,10 +40,13 @@ git commit
   ├─ load session state from .git/pi-reviewer/state.json
   ├─ construct prompt (first round vs follow-up with leniency note)
   ├─ invoke: pi --mode json --session-id <id> --model <model> --session-dir <dir>
-  │         --no-extensions -e <bundled extension.ts>
+  │         -e <bundled extension.ts>
   │         --system-prompt "<reviewer prompt>"
   │         --tools read,grep,find,ls,submit_review_decision
   │         -p "<user prompt>"
+  │
+  │   (No --no-extensions: provider extensions like ollama register the
+  │   models consumers rely on. Tool safety is enforced by --tools.)
   ├─ parse NDJSON stdout, scan for tool_execution_start with
   │  toolName == "submit_review_decision"
   ├─ no tool call found? → exit 1 (fail-closed: non-compliance)
@@ -142,6 +145,10 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep` (off by default),
 
 The hook uses `--tools read,grep,find,ls,submit_review_decision` to allowlist
 read-only exploration + the decision tool, excluding `bash`, `edit`, `write`.
+The allowlist applies to built-in, extension, and custom tools alike, so it
+remains deterministic even though the hook does **not** pass `--no-extensions`
+(provider extensions like ollama register the models consumers rely on; see
+the note in `pi_runner.py`).
 
 ## NDJSON event reference
 
@@ -257,26 +264,31 @@ pre-commit try-repo ~/pi-review-hook pi-review --verbose -- --model glm-5.2
 
 ## Build system
 
-The project uses `uv_build` as the build backend (set by `uv init`). The
-`extension.ts` file must be included in the wheel. With `uv_build`, package
-data in `src/pi_review_precommit/` should be included automatically since
-it's within the package directory. If not, check uv's build configuration
-or switch to `hatchling` with `force-include` (as shown in the implementation
-plan).
+The project uses `hatchling` as the build backend. `uv_build` was tried
+first but its compiled `uv-build` binary cannot run on NixOS inside
+pre-commit's pip build env (stub-ld), which breaks `pre-commit try-repo`
+and any pip install on NixOS. `hatchling` is pure Python and works
+anywhere. `extension.ts` is force-included into the wheel; verified
+present in `dist/*.whl`.
 
 ## Implementation status
 
 > **Update this section as you implement.** Check off items and add notes
 > about what's done, what's in progress, and what's blocked.
 
-- [ ] `extension.ts` — submit_review_decision tool definition
-- [ ] `config.py` — argparse + env var configuration
-- [ ] `state.py` — .git/pi-reviewer/ state management
-- [ ] `prompts.py` — system prompt + per-round prompt construction
-- [ ] `pi_runner.py` — pi invocation + NDJSON parsing
-- [ ] `hook.py` — main entry point, full flow
-- [ ] `.pre-commit-hooks.yaml` — already created
-- [ ] Unit tests
+- [x] `extension.ts` — submit_review_decision tool definition (StringEnum
+      for decision, verified loading under real pi 0.84.1 with ollama)
+- [x] `config.py` — argparse + env var configuration
+- [x] `state.py` — .git/pi-reviewer/ state management
+- [x] `prompts.py` — system prompt + per-round prompt construction
+- [x] `pi_runner.py` — pi invocation + NDJSON parsing (no `--no-extensions`;
+      see note above)
+- [x] `hook.py` — main entry point, full flow (empty-diff check runs before
+      same-tree rejection so a stale rejection can't block an empty index)
+- [x] `.pre-commit-hooks.yaml` — created
+- [x] Unit tests (33 passing: config, state, pi_runner, hook)
+- [x] Wheel build verified — `extension.ts` bundled via uv_build
+- [x] Extension integration verified under real pi (tool call + NDJSON)
 - [ ] End-to-end manual testing via `pre-commit try-repo`
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)
