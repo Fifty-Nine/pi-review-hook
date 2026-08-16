@@ -413,3 +413,4 @@ present in `dist/*.whl`.
 - [pi-review extension (reference)](https://github.com/earendil-works/pi-review)
 - [pre-commit — creating new hooks](https://pre-commit.com/#new-hooks)
 - [pi.nix flake input](https://github.com/lukasl-dev/pi.nix)
+- [Implementation plan: amend-after-go](docs/implementation-plan-amend.md)

@@ -207,6 +207,8 @@ invocation, then:
   whole change.
 - **Keeps the session after the go** (lazy clear) so further amends resume it
   too; it is cleared on the next non-amend commit.
+- **Carries the review note forward**: the amended commit's git note keeps
+  the previous review and appends the re-review (see Git notes below).
 
 Caveats:
 
@@ -367,6 +369,7 @@ nix shell nixpkgs#python3 nixpkgs#uv -c uv run pytest   # or: pytest -v
 Further reading:
 
 - [Implementation plan](docs/implementation-plan.md)
+- [Implementation plan: amend-after-go](docs/implementation-plan-amend.md)
 - [Architecture Decision Record](docs/adr.md)
 - [AGENTS.md](AGENTS.md) — living context for anyone working on the project
 
