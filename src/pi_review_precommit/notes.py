@@ -75,6 +75,73 @@ def build_audit_note_text() -> str:
     return AUDIT_NOTE_TEXT
 
 
+def build_carry_forward_note(old_sha: str, old_note: str, new_review_text: str) -> str:
+    """Carry the previous review's note forward onto an amended commit.
+
+    The amended commit replaces the old one, so the old review would
+    otherwise be lost (the orphaned commit is gc'd). The new note keeps
+    the old review and appends the re-review of the amended change.
+    """
+    return (
+        f"Previous review (amended from {old_sha}):\n"
+        f"{old_note}\n\n"
+        f"Amended review:\n{new_review_text}"
+    )
+
+
+def build_amended_no_review_note(old_sha: str, old_note: str) -> str:
+    """Note for an amended commit that was not re-reviewed.
+
+    Used when the amend was skipped (SKIP=pi-review), bypassed
+    (--no-verify), or the tree didn't match a review log (e.g. an
+    empty-diff message fix). The old review is carried forward with an
+    audit line instead of a re-review.
+    """
+    return (
+        f"Previous review (amended from {old_sha}):\n"
+        f"{old_note}\n\n"
+        "Amended without re-review (skipped, bypassed, or tree mismatch)."
+    )
+
+
+def detect_amend_reflog() -> str | None:
+    """Detect whether HEAD was just amended, via the reflog.
+
+    Returns the previous HEAD SHA if ``HEAD@{1}`` is NOT an ancestor of
+    HEAD (an amend replaces the commit, so the old commit is not an
+    ancestor), or None otherwise (new commit on top, merge, or no prior
+    HEAD).
+    """
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", "HEAD@{1}"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None  # no prior HEAD (root commit)
+    old = proc.stdout.strip()
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", old, "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return None  # old is an ancestor: new commit on top / merge
+    return old  # not an ancestor: amend
+
+
+def get_note(commit_sha: str) -> str | None:
+    """Read the pi-review note for a commit, or None if absent."""
+    proc = subprocess.run(
+        ["git", "notes", "--ref", NOTES_REF, "show", commit_sha],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
 def find_review_log_for_tree(tree_hash: str) -> Path | None:
     """Find the review log whose filename embeds the given tree hash.
 
@@ -126,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pi-review-notes: {e}", file=sys.stderr)
         return 1
 
+    # Amend detection (reflog): if HEAD@{1} is not an ancestor of HEAD,
+    # this commit replaced the previous one; carry its note forward so the
+    # review history survives the amend (the orphaned commit is gc'd).
+    old_sha = detect_amend_reflog()
+    old_note = get_note(old_sha) if old_sha else None
+
     log = find_review_log_for_tree(tree)
     if log is not None:
         try:
@@ -136,8 +209,11 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        new_text = build_note_text(review_log)
+        if old_sha is not None and old_note is not None:
+            new_text = build_carry_forward_note(old_sha, old_note, new_text)
         try:
-            attach_note(commit, build_note_text(review_log))
+            attach_note(commit, new_text)
         except RuntimeError as e:
             print(f"pi-review-notes: {e}", file=sys.stderr)
             return 1  # fail-open but visible: log kept for a retry
@@ -153,9 +229,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
-    # No matching review: audit note so every commit is annotated.
+    # No matching review: audit note so every commit is annotated. On an
+    # amend with a prior note, carry the old review forward with an audit
+    # line instead of a bare audit note.
+    if old_sha is not None and old_note is not None:
+        note_text = build_amended_no_review_note(old_sha, old_note)
+    else:
+        note_text = build_audit_note_text()
     try:
-        attach_note(commit, build_audit_note_text())
+        attach_note(commit, note_text)
     except RuntimeError as e:
         print(f"pi-review-notes: {e}", file=sys.stderr)
         return 1

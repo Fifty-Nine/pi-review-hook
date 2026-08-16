@@ -95,6 +95,84 @@ def test_build_audit_note_text() -> None:
     assert "No pi-review" in notes.build_audit_note_text()
 
 
+# --- Carry-forward note builders -------------------------------------------
+
+
+def test_build_carry_forward_note() -> None:
+    text = notes.build_carry_forward_note(
+        "abc123", "Decision: go\nSummary: LGTM", "Decision: go\nSummary: re-review"
+    )
+    assert text == (
+        "Previous review (amended from abc123):\n"
+        "Decision: go\nSummary: LGTM\n\n"
+        "Amended review:\nDecision: go\nSummary: re-review"
+    )
+
+
+def test_build_amended_no_review_note() -> None:
+    text = notes.build_amended_no_review_note("abc123", "Decision: go")
+    assert text == (
+        "Previous review (amended from abc123):\n"
+        "Decision: go\n\n"
+        "Amended without re-review (skipped, bypassed, or tree mismatch)."
+    )
+
+
+# --- Reflog amend detection ------------------------------------------------
+
+
+def test_detect_amend_reflog_returns_old_sha_when_not_ancestor(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "rev-parse" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "abc123\n", "")
+        # merge-base --is-ancestor: non-zero = not an ancestor = amend
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+    monkeypatch.setattr(notes.subprocess, "run", fake_run)
+    assert notes.detect_amend_reflog() == "abc123"
+    assert calls == [
+        ["git", "rev-parse", "--verify", "-q", "HEAD@{1}"],
+        ["git", "merge-base", "--is-ancestor", "abc123", "HEAD"],
+    ]
+
+
+def test_detect_amend_reflog_none_when_ancestor(monkeypatch) -> None:
+    def fake_run(cmd, **kwargs):
+        if "rev-parse" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "abc123\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")  # ancestor
+
+    monkeypatch.setattr(notes.subprocess, "run", fake_run)
+    assert notes.detect_amend_reflog() is None
+
+
+def test_detect_amend_reflog_none_when_no_prior_head(monkeypatch) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "fatal: ambiguous")
+
+    monkeypatch.setattr(notes.subprocess, "run", fake_run)
+    assert notes.detect_amend_reflog() is None
+
+
+def test_get_note_returns_text(monkeypatch) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, "Decision: go\n", "")
+
+    monkeypatch.setattr(notes.subprocess, "run", fake_run)
+    assert notes.get_note("abc123") == "Decision: go\n"
+
+
+def test_get_note_none_when_absent(monkeypatch) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "no note found")
+
+    monkeypatch.setattr(notes.subprocess, "run", fake_run)
+    assert notes.get_note("abc123") is None
+
+
 # --- Review log lookup -----------------------------------------------------
 
 
@@ -249,3 +327,111 @@ def test_main_unreadable_review_log_exits_nonzero(
 
     assert notes.main([]) == 1
     assert "cannot read review log" in capsys.readouterr().err
+
+
+# --- Amend carry-forward (main flow) ---------------------------------------
+
+
+@pytest.fixture
+def mock_amend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default: no amend detected."""
+    monkeypatch.setattr(notes, "detect_amend_reflog", lambda: None)
+    monkeypatch.setattr(notes, "get_note", lambda sha: None)
+
+
+def test_main_reviewed_amend_carries_forward(
+    mock_git, mock_amend, monkeypatch
+) -> None:
+    _write_review_log(TREE, summary="LGTM")
+    monkeypatch.setattr(notes, "detect_amend_reflog", lambda: "abc123")
+    monkeypatch.setattr(notes, "get_note", lambda sha: "Decision: go\nSummary: old")
+    attached: list[tuple[str, str]] = []
+
+    def fake_attach(commit, text):
+        attached.append((commit, text))
+
+    monkeypatch.setattr(notes, "attach_note", fake_attach)
+
+    assert notes.main([]) == 0
+    assert len(attached) == 1
+    text = attached[0][1]
+    assert text.startswith(
+        "Previous review (amended from abc123):\nDecision: go\nSummary: old"
+    )
+    assert "Amended review:\nDecision: go\nSummary: LGTM" in text
+    # consumed log deleted
+    assert not list(REVIEWS_DIR.glob("*.json"))
+
+
+def test_main_skipped_amend_carries_forward_without_review(
+    mock_git, mock_amend, monkeypatch
+) -> None:
+    # no review log for the tree (SKIP'd amend)
+    monkeypatch.setattr(notes, "detect_amend_reflog", lambda: "abc123")
+    monkeypatch.setattr(notes, "get_note", lambda sha: "Decision: go\nSummary: old")
+    attached: list[tuple[str, str]] = []
+
+    def fake_attach(commit, text):
+        attached.append((commit, text))
+
+    monkeypatch.setattr(notes, "attach_note", fake_attach)
+
+    assert notes.main([]) == 0
+    assert len(attached) == 1
+    text = attached[0][1]
+    assert text.startswith("Previous review (amended from abc123):")
+    assert "Amended without re-review" in text
+
+
+def test_main_amend_without_old_note_gets_audit_note(
+    mock_git, mock_amend, monkeypatch
+) -> None:
+    # amend detected but the old commit has no note
+    monkeypatch.setattr(notes, "detect_amend_reflog", lambda: "abc123")
+    monkeypatch.setattr(notes, "get_note", lambda sha: None)
+    attached: list[tuple[str, str]] = []
+
+    def fake_attach(commit, text):
+        attached.append((commit, text))
+
+    monkeypatch.setattr(notes, "attach_note", fake_attach)
+
+    assert notes.main([]) == 0
+    assert len(attached) == 1
+    assert "No pi-review" in attached[0][1]
+    assert "Previous review" not in attached[0][1]
+
+
+def test_main_new_commit_on_top_no_carry_forward(
+    mock_git, mock_amend, monkeypatch
+) -> None:
+    # reflog says HEAD@{1} is an ancestor (new commit on top): no amend
+    _write_review_log(TREE, summary="LGTM")
+    attached: list[tuple[str, str]] = []
+
+    def fake_attach(commit, text):
+        attached.append((commit, text))
+
+    monkeypatch.setattr(notes, "attach_note", fake_attach)
+
+    assert notes.main([]) == 0
+    assert len(attached) == 1
+    assert "Previous review" not in attached[0][1]
+    assert attached[0][1].startswith("Decision: go")
+
+
+def test_main_reviewed_amend_note_failure_keeps_log(
+    mock_git, mock_amend, monkeypatch, capsys
+) -> None:
+    _write_review_log(TREE)
+    monkeypatch.setattr(notes, "detect_amend_reflog", lambda: "abc123")
+    monkeypatch.setattr(notes, "get_note", lambda sha: "Decision: go")
+
+    def boom(commit, text):
+        raise RuntimeError("git notes attach failed: boom")
+
+    monkeypatch.setattr(notes, "attach_note", boom)
+
+    assert notes.main([]) == 1
+    assert len(list(REVIEWS_DIR.glob("*.json"))) == 1  # log kept
+    assert "boom" in capsys.readouterr().err

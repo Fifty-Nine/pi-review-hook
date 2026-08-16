@@ -71,9 +71,12 @@ git commit
   │
   └─ post-commit runs pi-review-notes hook (if enabled)
      ├─ resolve HEAD commit + tree hash
-     ├─ review log matches tree? → attach review note to refs/notes/pi-review,
-     │                             delete consumed log (cleanup failure → stderr)
-     ├─ no match? → attach brief "no review" audit note
+     ├─ detect amend via reflog (HEAD@{1} not an ancestor of HEAD)
+     ├─ review log matches tree? → attach review note to refs/notes/pi-review
+     │   (prepend "Previous review (amended from <old-sha>)" if amended),
+     │   delete consumed log (cleanup failure → stderr)
+     ├─ no match? → attach brief "no review" audit note (or carry-forward
+     │   with "amended without re-review" if amended with a prior note)
      └─ note attach fails? → exit 1 (fail-open but visible: log kept for retry)
 ```
 
@@ -365,6 +368,10 @@ present in `dist/*.whl`.
 - [x] `pi-review-notes` post-commit hook: attaches review printout (or "no
       review" audit note) to every commit under `refs/notes/pi-review`;
       deletes the consumed review log; fail-open but visible on note failure
+- [x] Amend note carry-forward: the post-commit hook detects amends via the
+      reflog (HEAD@{1} not an ancestor) and carries the old commit's note
+      forward ("Previous review (amended from <old-sha>)" + re-review, or
+      "amended without re-review" for SKIP'd/bypassed/empty-diff amends)
 - [x] README/AGENTS docs for git notes + jsonl.gz archives
 - [x] End-to-end manual testing via `pre-commit try-repo` (scratch-repo E2E:
       normal review flow, no-match audit note, amend-after-go, note-attach
@@ -385,10 +392,9 @@ present in `dist/*.whl`.
   completely different one, the session context may be polluted. The
   follow-up prompt tells pi "this may be new or continuation." Reset
   strategy to be guided by implementation experience.
-- Amend-after-go (pre-commit side): implemented — amend detection,
-  session resume with the full change set, lazy-clear state lifecycle.
-  Post-commit note carry-forward for amended commits is the next slice
-  (reflog detection in notes.py).
+- Amend-after-go: implemented — amend detection, session resume with the
+  full change set, lazy-clear state lifecycle, and post-commit note
+  carry-forward for amended commits (reflog detection in notes.py).
 - Non-Linux amend detection: the /proc walk is Linux-only; on other
   platforms amends fall through to the current behavior (fresh session,
   delta-only diff). Documented in README.

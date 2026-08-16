@@ -253,6 +253,15 @@ Session archive: ./.git/pi-reviewer/archive/session-<id>.jsonl.gz
 ```
 
 The `Session archive:` line appears only when `--archive-sessions` is on.
+
+**Amended commits carry the previous review forward.** When you
+`git commit --amend`, the post-commit hook detects the amend via the reflog
+(`HEAD@{1}` is not an ancestor of `HEAD`) and prepends the old commit's note
+with `Previous review (amended from <old-sha>):` before the new re-review —
+so the review history survives the amend (the orphaned commit is gc'd). If
+the amended commit was not re-reviewed (`SKIP=pi-review`, `--no-verify`, or
+an empty-diff message fix), the old note is carried forward with an
+`Amended without re-review` audit line instead.
 Commits with **no** associated review (e.g. `SKIP=pi-review`, `--no-verify`,
 merges) get a brief "no review" audit note, so the note history is a
 complete audit trail of what was and wasn't reviewed.
