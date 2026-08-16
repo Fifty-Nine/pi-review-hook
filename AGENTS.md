@@ -376,6 +376,13 @@ present in `dist/*.whl`.
 - [x] End-to-end manual testing via `pre-commit try-repo` (scratch-repo E2E:
       normal review flow, no-match audit note, amend-after-go, note-attach
       failure + retry, archiving off — all passed)
+- [x] Amend-flow E2E (scratch repo, rev af92577): amend-after-go (session
+      resumed, full change set, carry-forward note, log consumed, archive
+      snapshot), new-commit-on-top (fresh session, no carry-forward),
+      SKIP'd amend carry-forward, empty-diff message-fix amend, no-go-on-
+      amend round 2 (FLAW guideline, approved/base trees preserved, leniency
+      on the fixed issue), detached-HEAD rebase edit (delta review, not the
+      full change set) — all passed
 - [ ] Nix flake output (optional — for direct git-hooks.nix integration)
 - [ ] First release tag (v0.1.0)
 
